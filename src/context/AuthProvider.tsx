@@ -2,19 +2,18 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { User } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
+import { fetchUserRole } from '../lib/api'
 import { AuthContext } from './auth-context'
-import type { AppRole, AppUser } from './auth-context'
+import type { AppUser } from './auth-context'
 
 /**
- * Maps a Supabase user to the slim shape the UI needs.
- * The role is read from the JWT claims (`app_metadata.role`), which can only be
- * written server-side / from the dashboard. Full profile loading lands with the
- * real auth step - for now the shell just needs a truthy role to gate /admin.
+ * Hydrates the app user (id / email / role).
+ * The role comes from the `user_roles` table - never from client-side metadata -
+ * so admin access is decided by data the operator cannot edit.
  */
-function toAppUser(user: User | null | undefined): AppUser | null {
+async function toAppUser(user: User | null | undefined): Promise<AppUser | null> {
   if (!user) return null
-  const claim = (user.app_metadata as Record<string, unknown> | undefined)?.role
-  const role: AppRole = claim === 'admin' ? 'admin' : 'user'
+  const role = await fetchUserRole(user.id)
   return { id: user.id, email: user.email ?? null, role }
 }
 
@@ -25,24 +24,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let alive = true
 
+    async function hydrate(sessionUser: User | null | undefined) {
+      try {
+        const next = await toAppUser(sessionUser)
+        if (alive) setUser(next)
+      } catch (error) {
+        console.warn('[vCARD] session hydration failed:', error)
+        if (alive) setUser(null)
+      } finally {
+        if (alive) setLoading(false)
+      }
+    }
+
     supabase.auth
       .getSession()
-      .then(({ data }) => {
-        if (!alive) return
-        setUser(toAppUser(data.session?.user))
-      })
+      .then(({ data }) => hydrate(data.session?.user))
       .catch(() => {
-        // Unreachable / unconfigured Supabase must never break the shell.
-        if (alive) setUser(null)
-      })
-      .finally(() => {
-        if (alive) setLoading(false)
+        if (alive) {
+          setUser(null)
+          setLoading(false)
+        }
       })
 
     const { data: listener } = supabase.auth.onAuthStateChange(
       (_event, session) => {
-        setUser(toAppUser(session?.user))
-        setLoading(false)
+        // Defer the role lookup out of the auth callback: Supabase holds an
+        // internal lock while notifying listeners.
+        setTimeout(() => {
+          void hydrate(session?.user)
+        }, 0)
       },
     )
 

@@ -1,8 +1,13 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import { KeyRound, Lock, Mail, ShieldAlert } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { KeyRound, Loader2, Lock, Mail, ShieldAlert } from 'lucide-react'
 import { GlitchText, Panel } from '../components/GlitchText'
 import { TermButton } from '../components/TermButton'
+import { useAuth } from '../hooks/useAuth'
+import { useToast } from '../hooks/useToast'
+import { errorMessage } from '../lib/api'
+import { supabase } from '../lib/supabase'
 
 type Mode = 'login' | 'register'
 
@@ -13,24 +18,80 @@ const handshake = [
   'waiting for operator credentials',
 ]
 
+const friendly = (raw: string) => {
+  const message = raw.toLowerCase()
+  if (message.includes('invalid login')) return 'access denied — wrong alias or passphrase'
+  if (message.includes('already registered')) return 'alias already on file — switch to login'
+  if (message.includes('password')) return raw
+  if (message.includes('rate limit')) return 'rate limited — slow down and retry'
+  if (message.includes('failed to fetch') || message.includes('network')) {
+    return 'relay unreachable — supabase endpoint offline'
+  }
+  return raw
+}
+
 export function Auth() {
   const [mode, setMode] = useState<Mode>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [notice, setNotice] = useState<string | null>(null)
+  const [consent, setConsent] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  const { user, loading } = useAuth()
+  const toast = useToast()
+  const navigate = useNavigate()
+
+  // Already authenticated? Straight to the console.
+  useEffect(() => {
+    if (!loading && user) navigate('/dashboard', { replace: true })
+  }, [loading, user, navigate])
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    // Auth wiring lands in the next step (supabase.auth.signInWithPassword /
-    // signUp). For the shell we only echo the gate state.
-    setNotice(
-      `${mode.toUpperCase()} :: ${email || 'anonymous'} — auth_module_pending`,
-    )
+    setError(null)
+    setSubmitting(true)
+
+    try {
+      if (mode === 'register') {
+        const { data, error: signUpError } = await supabase.auth.signUp({
+          email: email.trim(),
+          password,
+        })
+        if (signUpError) throw signUpError
+
+        // Email confirmation is disabled on this project. If Supabase still
+        // returns a user without a session, try to open one immediately.
+        if (!data.session) {
+          const { error: signInError } = await supabase.auth.signInWithPassword({
+            email: email.trim(),
+            password,
+          })
+          if (signInError) throw signInError
+        }
+        toast.push('identity minted — welcome to the void', 'success')
+      } else {
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        })
+        if (signInError) throw signInError
+        toast.push('access granted', 'success')
+      }
+
+      navigate('/dashboard', { replace: true })
+    } catch (caught) {
+      const message = friendly(errorMessage(caught))
+      setError(message)
+      toast.push(message, 'error')
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   function switchMode(next: Mode) {
     setMode(next)
-    setNotice(null)
+    setError(null)
   }
 
   return (
@@ -92,7 +153,7 @@ export function Auth() {
             ))}
           </div>
 
-          <form onSubmit={handleSubmit} className="mt-7 space-y-5">
+          <form onSubmit={handleSubmit} className="mt-7 space-y-5" noValidate={false}>
             <div>
               <label htmlFor="alias" className="field-label">
                 operator_alias
@@ -135,28 +196,42 @@ export function Auth() {
               </p>
             </div>
 
-            <label className="flex cursor-pointer items-start gap-2.5 font-mono text-[10px] leading-relaxed tracking-[0.12em] text-ash/55">
-              <input
-                type="checkbox"
-                required
-                className="mt-0.5 h-3 w-3 shrink-0 appearance-none border border-matrix/40 bg-black checked:border-matrix checked:bg-matrix/80"
-              />
-              <span>
-                I accept that this wallet is unverified and that recovery of lost
-                credentials is impossible.
-              </span>
-            </label>
+            {mode === 'register' ? (
+              <label className="flex cursor-pointer items-start gap-2.5 font-mono text-[10px] leading-relaxed tracking-[0.12em] text-ash/55">
+                <input
+                  type="checkbox"
+                  checked={consent}
+                  onChange={(event) => setConsent(event.target.checked)}
+                  required
+                  className="mt-0.5 h-3 w-3 shrink-0 appearance-none border border-matrix/40 bg-black checked:border-matrix checked:bg-matrix/80"
+                />
+                <span>
+                  I accept that this wallet is unverified and that recovery of lost
+                  credentials is impossible.
+                </span>
+              </label>
+            ) : null}
 
-            <TermButton type="submit" prompt=">" fullWidth className="py-3">
-              {mode === 'login' ? 'AUTHENTICATE' : 'MINT_IDENTITY'}
+            <TermButton type="submit" prompt=">" fullWidth className="py-3" disabled={submitting}>
+              {submitting ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                  HANDSHAKE…
+                </>
+              ) : mode === 'login' ? (
+                'AUTHENTICATE'
+              ) : (
+                'MINT_IDENTITY'
+              )}
             </TermButton>
 
-            {notice ? (
+            {error ? (
               <p
-                role="status"
-                className="border border-matrix/25 bg-matrix/5 px-3 py-2 font-mono text-[10px] tracking-[0.18em] text-matrix/80 uppercase"
+                role="alert"
+                className="flex items-start gap-2 border border-alert/40 bg-alert/5 px-3 py-2 font-mono text-[10px] tracking-[0.15em] text-[#ff849b] uppercase"
               >
-                {notice}
+                <ShieldAlert className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+                {error}
               </p>
             ) : null}
           </form>

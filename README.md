@@ -1,135 +1,202 @@
 # {vCARD} — darkweb virtual debit card store
 
 An aggressive CRT / hacker-terminal storefront for a virtual debit card service,
-built as a Vite + React + TypeScript shell. **Step 1** (scaffolding, Tailwind,
-Supabase client) and **Step 2** (Darkweb theme, layout, placeholder pages) are
-done: the UI runs, every route renders, and no business logic is wired yet.
+built with Vite + React + TypeScript, Supabase auth/data and a Tailwind v4 theme.
+The UI shell, the auth flow, the shop, crypto checkout, the operator dashboard and
+the admin approval console are all wired up.
 
 ## Stack
 
-| Layer      | Choice                                            |
-| ---------- | ------------------------------------------------- |
-| Build      | Vite 8 + React 19 + TypeScript                    |
-| Styling    | Tailwind CSS v4 (`@tailwindcss/vite`, CSS-first)  |
-| Backend    | Supabase (`@supabase/supabase-js`)                |
-| Routing    | `react-router-dom` v7                             |
-| Icons      | `lucide-react`                                    |
-| QR codes   | `qrcode.react`                                    |
+| Layer    | Choice                                           |
+| -------- | ------------------------------------------------ |
+| Build    | Vite 8 + React 19 + TypeScript                   |
+| Styling  | Tailwind CSS v4 (`@tailwindcss/vite`, CSS-first) |
+| Backend  | Supabase (`@supabase/supabase-js`)               |
+| Routing  | `react-router-dom` v7                            |
+| Icons    | `lucide-react`                                   |
+| QR codes | `qrcode.react`                                   |
 
 ## Getting started
 
 ```bash
 npm install
-cp .env.example .env      # already created with placeholders
+cp .env.example .env      # already present with placeholders
 npm run dev               # http://localhost:5173
+npm run build             # tsc -b && vite build
+npm run lint              # oxlint
 ```
 
-Scripts: `npm run dev` · `npm run build` (tsc + vite) · `npm run preview` ·
-`npm run lint` (oxlint).
-
 ### Environment
-
-`.env` ships with placeholders so the shell boots offline:
 
 ```
 VITE_SUPABASE_URL="https://your-project-ref.supabase.co"
 VITE_SUPABASE_ANON_KEY="your-public-anon-key"
 ```
 
-Replace both with the values from **Supabase → Project Settings → API**. The
-anon key is safe in the browser; protect data with row level security.
+`src/lib/supabase.ts` exports the singleton client plus `isSupabaseConfigured`.
+When the variables are missing the app still boots and the shop falls back to
+demo fixtures (clearly flagged with a `demo_data` banner).
 
-`src/lib/supabase.ts` exports the singleton client plus `isSupabaseConfigured`,
-and falls back to a dummy URL so `createClient` never throws during scaffolding.
+### Database
 
-## Tailwind v4 configuration
+Run [`supabase/schema.sql`](supabase/schema.sql) once in the Supabase SQL editor.
+It creates everything the frontend expects:
 
-There is **no `tailwind.config.js`** — v4 is CSS-first. The whole theme lives in
-`src/index.css` inside `@theme`, and Tailwind generates the utilities from it:
+| Table        | Columns used by the app                                                                                   |
+| ------------ | --------------------------------------------------------------------------------------------------------- |
+| `cards`      | `id, name, description, brand, price_usd, stock_status, load_limit, monthly_limit, perks`                  |
+| `user_roles` | `user_id, role` (`user` / `admin`)                                                                         |
+| `orders`     | `id, user_id, card_id, amount_usd, crypto_method, txid, status, delivery_details, created_at`              |
 
-| Token / utility        | Value                                        |
-| ---------------------- | -------------------------------------------- |
-| `bg-void`              | `#050505` deep black                         |
-| `text-matrix`          | `#00FF41` matrix green                       |
-| `text-neon`            | `#9D00FF` neon purple                        |
-| `text-alert`           | `#FF003C` alert red                          |
-| `text-ash` / `text-bone` | muted grey-green / off-white body text     |
-| `font-mono`            | JetBrains Mono → Fira Code → Courier New     |
-| `animate-glitch-a/b`   | chromatic glitch layers                      |
-| `animate-blink`        | terminal caret                               |
-| `animate-scan`         | scan sweep                                   |
-| `animate-marquee`      | crypto ticker                                |
+Plus the `resolve_payment(p_order_id uuid, p_approve boolean)` RPC (SECURITY
+DEFINER, admin-only), RLS policies (operators only see their own orders, only
+admins see everything) and a trigger that gives every new auth user a
+`user_roles` row. Promote an operator to admin with:
 
-The Vite plugin is registered in `vite.config.ts`:
-
-```ts
-plugins: [react(), tailwindcss()]
+```sql
+update public.user_roles set role = 'admin' where user_id = '<uuid>';
 ```
 
-## Theme details
+Email confirmation should stay **disabled** in Supabase Auth → Providers → Email
+so `signUp` returns a session immediately.
 
-- **CRT scanlines** — `body::before` paints a fixed repeating-linear-gradient
-  with a slow flicker; `body::after` adds the vignette + RGB shadow mask.
-- **Glitch headings** — `.glitch` clones its text into `::before` / `::after`
-  via `attr(data-text)`, tinting them neon purple / alert red with clipped
-  `glitch-a` / `glitch-b` animations. Used through `<GlitchText />`.
-- **Terminal buttons** — `.term-btn` (green), `.term-btn--neon` (purple),
-  `.term-btn--alert` (red), `.term-btn--ghost` (quiet). All monospace, uppercase,
-  tracked-out, with glowing borders on hover and a `>` prompt slot.
-- **Frames** — `.panel` with corner brackets and an optional HUD `label`,
-  available in matrix / neon / alert accents.
-- Monospace is enforced on `body` and inherited everywhere; headings, forms,
-  tables and buttons all use it.
+## Business logic
+
+### 1. Authentication — `src/pages/Auth.tsx`, `src/context/AuthProvider.tsx`
+
+- `supabase.auth.signUp({ email, password })` and
+  `supabase.auth.signInWithPassword(...)`; no OAuth, no email verification.
+- If `signUp` somehow returns a user without a session, the page immediately
+  calls `signInWithPassword` to open one.
+- On success → `navigate('/dashboard', { replace: true })`; failures render a
+  terminal-style `role="alert"` panel plus an error toast.
+- `AuthProvider` restores the session with `getSession()`, subscribes to
+  `onAuthStateChange`, and resolves the role from **`user_roles`**
+  (`fetchUserRole` in `src/lib/api.ts`) — never from client-editable metadata.
+  The role lookup is deferred out of the auth callback to avoid Supabase's
+  internal lock.
+- `/auth` is wrapped in `<SignedOutOnly>` (signed-in users bounce to the console).
+
+### 2. Shop — `src/pages/Shop.tsx`
+
+- Loads `select('*') from cards`, normalises rows (`src/lib/api.ts` → `mapCard`)
+  and sorts by price.
+- Loading skeleton, error panel with `RETRY_SYNC`, empty-search state, search +
+  `ALL / IN STOCK / OUT OF STOCK` filters and a `SYNC` button.
+- `stock_status === 'out_of_stock'` renders a red **SOLD OUT** chip and a
+disabled `SOLD OUT` button.
+
+### 3. Checkout — `src/components/CheckoutDialog.tsx`
+
+- Terminal modal (`role="dialog"`, Esc/backdrop close, scroll lock) opened from
+  `BUY NOW`.
+- Rail dropdown: **USDT - BEP20** (`0x35aec7E35F65ea227e49fDd321709D52Ada389E4`)
+  and **USDT - Solana** (`3mjR2gV3MJrudjus9yBuh3EtSMw6Ca5BVFcYiMDa1VjQ`), with a
+  live `qrcode.react` QR, network/confirmation hints and a copy-address button.
+- TXID field (validated non-empty and ≥16 chars).
+- `CONFIRM PAYMENT`:
+  - no session → inline error + toast → redirect to `/auth`;
+  - otherwise inserts `orders { user_id, card_id, amount_usd, crypto_method,
+    txid, status: 'pending' }`, shows a success toast, closes and redirects to
+    `/dashboard`.
+
+### 4. Dashboard — `src/pages/Dashboard.tsx`
+
+- Fetches `orders` filtered by `user_id` (newest first client-side).
+- Aggregate panel: settled spend, orders / pending / delivered counts, clearance.
+- Order log with status chips (`PENDING`, `COMPLETED`, `FAILED`), crypto method,
+  short id, timestamp and copyable TXID.
+- Completed orders render `order.delivery_details` (card number, expiry, CVC,
+  brand — object or plain string) with per-field copy buttons; the virtual card
+  shows the delivered last-4/expiry.
+- Refresh, error-with-retry and empty states.
+
+### 5. Admin — `src/pages/Admin.tsx`
+
+- `/admin` is wrapped in `<ProtectedRoute requireAdmin>`: anonymous → `/auth`,
+  signed-in non-admin → `NO_CLEARANCE` screen (no data is fetched).
+- Fetches every order, resolves card names client-side, and renders
+  **Order ID · User ID · Card · Crypto Method · TXID · Status · Actions**.
+- `APPROVE` on a pending order calls
+  `supabase.rpc('resolve_payment', { p_order_id, p_approve: true })`, toasts the
+  result and refetches the queue (row flips to COMPLETED + `delivery_details`).
+
+## Theme
+
+Tailwind v4 is CSS-first: the whole config lives in `@theme` inside
+`src/index.css`.
+
+| Token / utility          | Value                                    |
+| ------------------------ | ---------------------------------------- |
+| `bg-void`                | `#050505` deep black                     |
+| `text-matrix`            | `#00FF41` matrix green                   |
+| `text-neon`              | `#9D00FF` neon purple                    |
+| `text-alert`             | `#FF003C` alert red                      |
+| `font-mono`              | JetBrains Mono → Fira Code → Courier New |
+| `animate-glitch-a/b`     | chromatic glitch layers                  |
+| `animate-blink`          | terminal caret                           |
+| `animate-marquee`        | crypto ticker                            |
+
+- **CRT scanlines** — `body::before` fixed repeating gradient + flicker;
+  `body::after` adds the vignette / RGB shadow mask.
+- **Glitch headings** — `.glitch` clones text with `attr(data-text)` into purple
+  and red clipped layers (`<GlitchText />`).
+- **Terminal buttons** — `.term-btn` (+ `--neon`, `--alert`, `--ghost`) with a
+  `>` prompt slot and glowing borders on hover.
 - `prefers-reduced-motion` disables every animation.
 
 ## Routes
 
-| Path         | Page            | Notes                                                   |
-| ------------ | --------------- | ------------------------------------------------------- |
-| `/`          | `Home`          | hero, boot log, ticker, stats, capabilities, CTA        |
-| `/shop`      | `Shop`          | 6 mock tiers, filter chips, search, queue-to-cart stub  |
-| `/auth`      | `Auth`          | login/register tabs + handshake log (no Supabase call)  |
-| `/dashboard` | `Dashboard`     | virtual card, balance sparkline, ledger, BTC QR deposit |
-| `/admin`     | `Admin`         | restricted banner, metrics, order queue, issuer health  |
-| `*`          | `NotFound`      | terminal-style 404                                      |
+| Path         | Page        | Guard                          |
+| ------------ | ----------- | ------------------------------ |
+| `/`          | Home        | public                         |
+| `/shop`      | Shop        | public                         |
+| `/auth`      | Auth        | redirects signed-in users      |
+| `/dashboard` | Dashboard   | session required               |
+| `/admin`     | Admin       | session + `user_roles` = admin |
+| `*`          | NotFound    | public                         |
 
-`Layout.tsx` renders the status rail, the sticky `Navbar` (`{vCARD}` logo in
-neon green; HOME / SHOP / DASHBOARD / ADMIN / SIGN OUT) and the footer.
-**ADMIN only appears when `app_metadata.role === 'admin'`**; anonymous visitors
-see `SIGN_IN` instead of `SIGN OUT`.
+`Layout.tsx` renders the status rail, sticky `Navbar` (`{vCARD}` logo, HOME /
+SHOP / DASHBOARD / ADMIN / SIGN OUT) and footer. ADMIN only appears once the
+`user_roles` lookup returns `admin`.
 
 ## Source layout
 
 ```
 src/
 ├── components/
-│   ├── GlitchText.tsx    # <GlitchText /> + <Panel />
-│   ├── Layout.tsx        # shell: navbar + main + footer
-│   ├── Navbar.tsx        # logo, nav, admin gate, mobile menu
-│   ├── ScrollToTop.tsx   # resets scroll per route
-│   ├── TermButton.tsx    # <TermButton /> / <TermLink />
-│   └── VirtualCard.tsx   # masked card artifact
+│   ├── CheckoutDialog.tsx  # crypto rail picker, QR, TXID, order insert
+│   ├── GlitchText.tsx      # <GlitchText /> + <Panel />
+│   ├── Layout.tsx          # shell: navbar + main + footer
+│   ├── Navbar.tsx          # logo, nav, admin gate, mobile menu
+│   ├── ProtectedRoute.tsx  # session / admin guards + boot screen
+│   ├── ScrollToTop.tsx
+│   ├── TermButton.tsx      # <TermButton /> / <TermLink />
+│   ├── ToastProvider.tsx   # terminal toast queue
+│   └── VirtualCard.tsx     # masked card artifact
 ├── context/
-│   ├── auth-context.ts   # AuthContext + types
-│   └── AuthProvider.tsx  # session restore + role mapping
-├── hooks/useAuth.ts      # typed context consumer
-├── lib/supabase.ts       # Supabase singleton
-├── pages/                # Home, Shop, Auth, Dashboard, Admin, NotFound
-├── App.tsx               # router
-├── index.css             # @theme + scanlines + glitch + components
+│   ├── auth-context.ts
+│   ├── AuthProvider.tsx    # session restore + user_roles lookup
+│   └── toast-context.ts
+├── hooks/
+│   ├── useAuth.ts
+│   └── useToast.ts
+├── lib/
+│   ├── api.ts              # cards / orders / role / order insert / RPC
+│   ├── crypto.ts           # rails + deposit addresses
+│   └── supabase.ts         # client singleton
+├── pages/                  # Home, Shop, Auth, Dashboard, Admin, NotFound
+├── types/db.ts             # Card / Order / NewOrder models
+├── App.tsx                 # providers + routes + guards
+├── index.css               # @theme + scanlines + glitch + components
 └── main.tsx
 ```
 
-## Auth shell (deliberately minimal)
+## Notes & assumptions
 
-`AuthProvider` restores the Supabase session (`getSession`) and subscribes to
-`onAuthStateChange`; the role is read from the JWT claim
-`app_metadata.role`. That is enough to gate the ADMIN nav item and the sign-out
-button. Password sign-in / sign-up, profile rows and RLS policies land in the
-next step — every form currently only echoes a `*_PENDING` status.
-
-## What is mocked
-
-Card tiers, balances, transactions, orders, issuer health and the deposit
-address are hard-coded fixtures so the theme can be reviewed before the backend
-exists. QR codes are generated by `qrcode.react` from that mock address.
+- `delivery_details` may be a JSON object (`card_number`, `expiry`, `cvc`,
+  `brand`, `holder`) or a plain string — both render on the dashboard.
+- Order status is only ever written by the client as `pending`; approvals go
+  through the `resolve_payment` RPC so RLS never needs an UPDATE policy.
+- Payment verification is manual by design: paste TXID → admin approves on-chain.
+- Home page metrics remain decorative copy; shop/dashboard/admin data is live.

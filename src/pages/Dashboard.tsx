@@ -1,44 +1,131 @@
-import { useState } from 'react'
-import { QRCodeSVG } from 'qrcode.react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
-  Activity,
-  ArrowUpRight,
-  Copy,
-  Download,
-  Snowflake,
+  AlertTriangle,
+  CheckCircle2,
+  ClipboardCopy,
+  Clock,
+  CreditCard,
+  Loader2,
+  RefreshCw,
   Wallet,
+  XCircle,
 } from 'lucide-react'
 import { GlitchText, Panel } from '../components/GlitchText'
 import { TermButton, TermLink } from '../components/TermButton'
 import { VirtualCard } from '../components/VirtualCard'
 import { useAuth } from '../hooks/useAuth'
+import { useToast } from '../hooks/useToast'
+import { errorMessage, fetchOrders } from '../lib/api'
+import type { DeliveryDetails, Order, OrderStatus } from '../types/db'
 
-const DEPOSIT_ADDRESS = 'bc1q7f4a9x2ghost0vcard8zz4m2kq9n3v7t'
+const usd = (value: number) =>
+  value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
-const transactions = [
-  { id: 'tx_9012', merchant: 'nordvpn.com', at: '12m ago', amount: '-4.99', state: 'settled' },
-  { id: 'tx_9011', merchant: 'openai.com', at: '3h ago', amount: '-20.00', state: 'settled' },
-  { id: 'tx_9010', merchant: 'steam wallet', at: '1d ago', amount: '-50.00', state: 'settled' },
-  { id: 'tx_9009', merchant: 'deposit · usdt', at: '1d ago', amount: '+250.00', state: 'confirmed' },
-  { id: 'tx_9008', merchant: 'aws.amazon.com', at: '2d ago', amount: '-12.40', state: 'declined' },
-]
+const statusStyles: Record<OrderStatus, string> = {
+  pending: 'border-neon/40 bg-neon/5 text-[#d9aaff]',
+  completed: 'border-matrix/40 bg-matrix/5 text-matrix',
+  failed: 'border-alert/50 bg-alert/5 text-[#ff849b]',
+}
 
-const quickActions = [
-  { icon: Copy, label: 'copy_pan', note: 'pan•••• 4021' },
-  { icon: Snowflake, label: 'freeze', note: 'instant lock' },
-  { icon: Wallet, label: 'reload', note: 'crypto only' },
-  { icon: Download, label: 'export', note: 'csv statement' },
-]
+const statusIcons = {
+  pending: Clock,
+  completed: CheckCircle2,
+  failed: XCircle,
+} as const
 
-const stateStyles: Record<string, string> = {
-  settled: 'text-matrix/80 border-matrix/30',
-  confirmed: 'text-[#d9aaff] border-neon/40',
-  declined: 'text-[#ff849b] border-alert/40',
+const DELIVERY_KEYS: Record<string, string[]> = {
+  card_number: ['card_number', 'number', 'pan', 'card_no'],
+  expiry: ['expiry', 'exp', 'exp_date', 'valid_thru'],
+  cvc: ['cvc', 'cvv', 'cvn', 'security_code'],
+  brand: ['brand', 'network', 'scheme'],
+  holder: ['holder', 'name', 'card_holder'],
+}
+
+function readDelivery(details: DeliveryDetails, field: keyof typeof DELIVERY_KEYS): string | null {
+  if (!details || typeof details !== 'object') return null
+  for (const key of DELIVERY_KEYS[field]) {
+    const value = (details as Record<string, unknown>)[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+    if (typeof value === 'number') return String(value)
+  }
+  return null
+}
+
+const digits = (value: string | null) => (value ? value.replace(/\D/g, '') : '')
+
+function formatDate(value: string | null) {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toISOString().slice(0, 16).replace('T', ' ')
 }
 
 export function Dashboard() {
   const { user } = useAuth()
-  const [status, setStatus] = useState('session active · card online')
+  const toast = useToast()
+
+  const [orders, setOrders] = useState<Order[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
+  const [nonce, setNonce] = useState(0)
+
+  // `null` means "not loaded yet" - no separate loading flag to keep in sync.
+  const loading = orders === null && !error
+
+  useEffect(() => {
+    if (!user) return
+    let cancelled = false
+    fetchOrders(user.id)
+      .then((rows) => {
+        if (cancelled) return
+        setOrders(rows)
+        setError(null)
+      })
+      .catch((caught: unknown) => {
+        if (!cancelled) setError(errorMessage(caught))
+      })
+      .finally(() => {
+        if (!cancelled) setRefreshing(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [user, nonce])
+
+  const refresh = useCallback(() => {
+    setRefreshing(true)
+    setNonce((value) => value + 1)
+  }, [])
+
+  const stats = useMemo(() => {
+    const rows = orders ?? []
+    const completed = rows.filter((order) => order.status === 'completed')
+    return {
+      total: rows.length,
+      pending: rows.filter((order) => order.status === 'pending').length,
+      completed: completed.length,
+      spent: completed.reduce((sum, order) => sum + order.amountUsd, 0),
+    }
+  }, [orders])
+
+  const delivered = useMemo(
+    () => (orders ?? []).find((order) => order.status === 'completed' && order.deliveryDetails),
+    [orders],
+  )
+
+  const holder = user?.email?.split('@')[0]?.toUpperCase() ?? 'ANON_OPERATOR'
+  const last4 = digits(readDelivery(delivered?.deliveryDetails ?? null, 'card_number')).slice(-4)
+  const expiry = readDelivery(delivered?.deliveryDetails ?? null, 'expiry') ?? '--/--'
+
+  async function copy(value: string, label: string) {
+    try {
+      await navigator.clipboard.writeText(value)
+      toast.push(`${label} copied`, 'success')
+    } catch {
+      toast.push('clipboard blocked by the browser', 'error')
+    }
+  }
 
   return (
     <div className="animate-rise">
@@ -51,14 +138,14 @@ export function Dashboard() {
             className="mt-3 font-mono text-3xl font-extrabold tracking-tighter sm:text-4xl"
           />
           <p className="mt-2 font-mono text-[11px] tracking-[0.2em] text-ash/50 uppercase">
-            operator :: {user?.email ?? 'anonymous_guest'}
+            operator :: {user?.email ?? 'unknown'} · role :: {user?.role ?? 'guest'}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="chip">
-            <span className="h-1.5 w-1.5 animate-blink rounded-full bg-matrix" />
-            {status}
-          </span>
+          <TermButton variant="ghost" className="px-3 py-2 text-[9px]" onClick={refresh} disabled={refreshing}>
+            <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
+            REFRESH
+          </TermButton>
           <TermLink to="/shop" prompt="&gt;" variant="neon" className="px-4 py-2">
             MINT_NEW
           </TermLink>
@@ -66,170 +153,247 @@ export function Dashboard() {
       </header>
 
       <div className="mt-8 grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
-        {/* card + quick actions */}
         <div className="space-y-6">
           <VirtualCard
-            holder={user?.email?.split('@')[0]?.toUpperCase() ?? 'ANON_OPERATOR'}
-            balance="$250.00"
-            className="shadow-[0_24px_70px_-30px_rgba(157,0,255,0.55)]"
+            holder={holder}
+            last4={last4 || '----'}
+            expiry={expiry}
+            tier={delivered?.cardName ?? 'AWAITING'}
+            balance={`${usd(stats.spent)}`}
           />
 
-          <Panel label="quick_actions" className="p-5">
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              {quickActions.map((action) => {
-                const Icon = action.icon
-                return (
-                  <TermButton
-                    key={action.label}
-                    variant="ghost"
-                    className="h-full flex-col gap-2 px-2 py-3 text-[9px] tracking-[0.18em]"
-                    onClick={() => setStatus(`${action.label} :: executed`)}
-                  >
-                    <Icon className="h-4 w-4 text-matrix/70" aria-hidden="true" />
-                    {action.label}
-                    <span className="text-[8px] font-normal tracking-[0.15em] text-ash/40">
-                      {action.note}
-                    </span>
-                  </TermButton>
-                )
-              })}
-            </div>
-          </Panel>
-
-          <Panel label="transactions">
+          <Panel label="your_orders" className="p-0">
             <div className="flex items-center justify-between px-4 py-3">
               <h2 className="font-mono text-[11px] font-bold tracking-[0.25em] text-matrix/80">
-                LEDGER_LAST_5
+                ORDER_LOG
               </h2>
-              <span className="hud">no entries purged</span>
+              <span className="hud">{stats.total} record(s)</span>
             </div>
-            <div className="overflow-x-auto">
-              <table className="table-term">
-                <thead>
-                  <tr>
-                    <th scope="col">id</th>
-                    <th scope="col">merchant</th>
-                    <th scope="col">when</th>
-                    <th scope="col" className="text-right">amount</th>
-                    <th scope="col" className="text-right">state</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {transactions.map((tx) => (
-                    <tr key={tx.id}>
-                      <td className="text-matrix/40">{tx.id}</td>
-                      <td>{tx.merchant}</td>
-                      <td className="text-ash/50">{tx.at}</td>
-                      <td
-                        className={`text-right ${
-                          tx.amount.startsWith('+') ? 'text-matrix' : 'text-bone/80'
-                        }`}
-                      >
-                        {tx.amount}
-                      </td>
-                      <td className="text-right">
-                        <span
-                          className={`inline-block border px-2 py-0.5 text-[9px] tracking-[0.2em] uppercase ${stateStyles[tx.state]}`}
-                        >
-                          {tx.state}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+
+            {loading ? (
+              <div className="flex items-center gap-2 border-t border-white/5 px-4 py-10 font-mono text-[11px] tracking-[0.25em] text-matrix/50 uppercase">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                querying orders…
+              </div>
+            ) : null}
+
+            {!loading && error ? (
+              <div className="border-t border-white/5 px-4 py-6">
+                <p className="flex items-start gap-2 font-mono text-[11px] tracking-[0.12em] text-[#ff849b] uppercase">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                  orders_unreachable :: {error}
+                </p>
+                <TermButton variant="alert" className="mt-4 px-4 py-2" onClick={refresh}>
+                  RETRY
+                </TermButton>
+              </div>
+            ) : null}
+
+            {!loading && !error && (orders?.length ?? 0) === 0 ? (
+              <div className="border-t border-white/5 px-4 py-10 text-center">
+                <CreditCard className="mx-auto h-6 w-6 text-matrix/40" aria-hidden="true" />
+                <p className="mt-3 font-mono text-[11px] tracking-[0.2em] text-ash/55 uppercase">
+                  no orders yet — mint your first card
+                </p>
+                <Link to="/shop" className="term-btn mt-5 inline-flex px-5 py-2.5">
+                  <span className="term-btn__prompt" aria-hidden="true">
+                    &gt;
+                  </span>
+                  BROWSE_VAULT
+                </Link>
+              </div>
+            ) : null}
+
+            {!loading && !error ? (
+              <ul className="divide-y divide-white/5 border-t border-white/5">
+                {(orders ?? []).map((order) => {
+                  const Icon = statusIcons[order.status]
+                  const details = order.deliveryDetails
+                  const isObject = details && typeof details === 'object'
+                  return (
+                    <li key={order.id} className="px-4 py-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="font-mono text-[12px] font-bold tracking-[0.18em] text-bone/90">
+                            {order.cardName ?? 'UNKNOWN_CARD'}
+                          </p>
+                          <p className="mt-1 font-mono text-[9.5px] tracking-[0.18em] text-ash/45 uppercase">
+                            #{order.id.slice(0, 8)} · {order.cryptoMethod ?? 'n/a'} ·{' '}
+                            {formatDate(order.createdAt)}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="font-mono text-sm text-bone/85">
+                            {usd(order.amountUsd)} <span className="text-[9px] text-ash/40">USDT</span>
+                          </span>
+                          <span
+                            className={`inline-flex items-center gap-1.5 border px-2 py-0.5 font-mono text-[9px] tracking-[0.2em] uppercase ${statusStyles[order.status]}`}
+                          >
+                            <Icon className="h-2.5 w-2.5" aria-hidden="true" />
+                            {order.status}
+                          </span>
+                        </div>
+                      </div>
+
+                      {order.txid ? (
+                        <div className="mt-2 flex items-center gap-2">
+                          <span className="hud text-[8px] text-matrix/35">txid</span>
+                          <code className="truncate font-mono text-[9.5px] text-ash/50">
+                            {order.txid}
+                          </code>
+                          <button
+                            type="button"
+                            onClick={() => void copy(order.txid ?? '', 'txid')}
+                            aria-label="Copy transaction hash"
+                            className="cursor-pointer text-ash/40 transition-colors hover:text-matrix"
+                          >
+                            <ClipboardCopy className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ) : null}
+
+                      {order.status === 'completed' && details ? (
+                        <div className="mt-3 border border-matrix/30 bg-matrix/[0.04] p-3">
+                          <p className="hud text-[8px] text-matrix/50">delivered_card_details</p>
+                          {isObject ? (
+                            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                              {(
+                                [
+                                  ['card_number', readDelivery(details, 'card_number')],
+                                  ['expiry', readDelivery(details, 'expiry')],
+                                  ['cvc', readDelivery(details, 'cvc')],
+                                  ['brand', readDelivery(details, 'brand')],
+                                ] as const
+                              ).map(([label, value]) =>
+                                value ? (
+                                  <div key={label} className="flex items-center justify-between gap-2 border-b border-white/5 pb-1">
+                                    <span className="font-mono text-[9px] tracking-[0.2em] text-ash/45 uppercase">
+                                      {label.replace('_', ' ')}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => void copy(value, label)}
+                                      className="flex cursor-pointer items-center gap-1.5 font-mono text-[10.5px] tracking-[0.12em] text-matrix transition-opacity hover:opacity-70"
+                                      title={`copy ${label}`}
+                                    >
+                                      {value}
+                                      <ClipboardCopy className="h-2.5 w-2.5" aria-hidden="true" />
+                                    </button>
+                                  </div>
+                                ) : null,
+                              )}
+                            </div>
+                          ) : (
+                            <p className="mt-2 font-mono text-[10.5px] leading-relaxed break-all text-matrix/85">
+                              {String(details)}
+                            </p>
+                          )}
+                        </div>
+                      ) : null}
+
+                      {order.status === 'pending' ? (
+                        <p className="mt-2 font-mono text-[9px] tracking-[0.18em] text-[#d9aaff]/70 uppercase">
+                          awaiting on-chain verification by an admin
+                        </p>
+                      ) : null}
+                      {order.status === 'failed' ? (
+                        <p className="mt-2 font-mono text-[9px] tracking-[0.18em] text-[#ff849b]/80 uppercase">
+                          verification failed — open a ticket with the txid above
+                        </p>
+                      ) : null}
+                    </li>
+                  )
+                })}
+              </ul>
+            ) : null}
           </Panel>
         </div>
 
-        {/* balance + deposit */}
+        {/* right column */}
         <div className="space-y-6">
-          <Panel label="balance" className="relative p-5">
-            <div className="scan-sweep" aria-hidden="true" />
-            <p className="hud">available_usdt</p>
+          <Panel label="account" className="p-5">
+            <p className="hud">settled_spend</p>
             <p className="mt-2 font-mono text-4xl font-bold tracking-tight text-matrix text-glow">
-              250.00
+              {usd(stats.spent)}
+              <span className="ml-2 text-[10px] tracking-[0.25em] text-ash/45">USDT</span>
             </p>
-            <p className="mt-1 flex items-center gap-1.5 font-mono text-[10px] tracking-[0.2em] text-matrix/50 uppercase">
-              <ArrowUpRight className="h-3 w-3" aria-hidden="true" />
-              +250.00 loaded 1d ago
+            <p className="mt-1 font-mono text-[10px] tracking-[0.2em] text-ash/45 uppercase">
+              across {stats.completed} completed order{stats.completed === 1 ? '' : 's'}
             </p>
 
-            <svg
-              viewBox="0 0 220 60"
-              className="mt-5 h-16 w-full text-matrix/70"
-              role="img"
-              aria-label="Balance trend, trending up"
-            >
-              <polyline
-                points="0,50 25,44 50,46 75,34 100,38 125,22 150,26 175,14 200,18 220,8"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-              />
-              <polyline
-                points="0,50 25,44 50,46 75,34 100,38 125,22 150,26 175,14 200,18 220,8 220,60 0,60"
-                fill="url(#fade)"
-                stroke="none"
-              />
-              <defs>
-                <linearGradient id="fade" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#00ff41" stopOpacity="0.25" />
-                  <stop offset="100%" stopColor="#00ff41" stopOpacity="0" />
-                </linearGradient>
-              </defs>
-            </svg>
-
-            <div className="mt-2 grid grid-cols-2 gap-3 border-t border-white/5 pt-4 font-mono text-[10px] tracking-[0.15em] uppercase">
-              <div>
-                <p className="hud text-[8px]">spent_30d</p>
-                <p className="mt-1 text-bone/75">87.39</p>
-              </div>
-              <div>
-                <p className="hud text-[8px]">limit_left</p>
-                <p className="mt-1 text-bone/75">2,412.61</p>
-              </div>
-            </div>
-            <div className="mt-3 h-1 w-full bg-white/5">
-              <div className="h-1 w-[18%] bg-matrix shadow-[0_0_10px_#00ff41]" />
-            </div>
-          </Panel>
-
-          <Panel accent="neon" label="deposit_address" className="p-5">
-            <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-start">
-              <div className="border border-matrix/25 bg-black p-2">
-                <QRCodeSVG
-                  value={`bitcoin:${DEPOSIT_ADDRESS}`}
-                  size={112}
-                  bgColor="#050505"
-                  fgColor="#00ff41"
-                  level="M"
-                  title="BTC deposit QR code"
-                />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="hud">network :: bitcoin</p>
-                <p className="mt-2 font-mono text-[10.5px] leading-relaxed break-all text-bone/75">
-                  {DEPOSIT_ADDRESS}
-                </p>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <TermButton
-                    variant="ghost"
-                    className="px-3 py-1.5 text-[9px]"
-                    onClick={() => setStatus('deposit address copied')}
-                  >
-                    <Copy className="h-3 w-3" aria-hidden="true" />
-                    COPY
-                  </TermButton>
-                  <span className="chip chip-neon">1 conf</span>
+            <div className="mt-5 grid grid-cols-3 gap-3 border-t border-white/5 pt-4">
+              {[
+                { label: 'orders', value: stats.total },
+                { label: 'pending', value: stats.pending },
+                { label: 'delivered', value: stats.completed },
+              ].map((item) => (
+                <div key={item.label}>
+                  <p className="hud text-[8px]">{item.label}</p>
+                  <p className="mt-1 font-mono text-lg font-bold text-bone/85">{item.value}</p>
                 </div>
-              </div>
+              ))}
             </div>
-            <p className="mt-4 flex items-center gap-2 font-mono text-[9px] tracking-[0.18em] text-ash/40 uppercase">
-              <Activity className="h-3 w-3" aria-hidden="true" />
-              address rotates every 24h
-            </p>
+
+            <div className="divider-term my-4" />
+
+            <dl className="space-y-2 font-mono text-[10px] tracking-[0.15em] uppercase">
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-ash/40">clearance</dt>
+                <dd className={user?.role === 'admin' ? 'text-[#d9aaff]' : 'text-matrix/80'}>
+                  {user?.role ?? 'guest'}
+                </dd>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-ash/40">operator_id</dt>
+                <dd className="truncate text-bone/60">{user?.id.slice(0, 8) ?? '—'}</dd>
+              </div>
+            </dl>
           </Panel>
+
+          <Panel accent="neon" label="settlement" className="p-5">
+            <div className="flex items-center gap-2">
+              <Wallet className="h-4 w-4 text-[#d9aaff]" aria-hidden="true" />
+              <h2 className="font-mono text-[11px] font-bold tracking-[0.25em] text-[#d9aaff]">
+                USDT RAILS
+              </h2>
+            </div>
+            <p className="mt-3 font-mono text-[11px] leading-relaxed text-ash/65">
+              Payments settle in USDT over BEP20 or Solana. Submit the transaction
+              hash at checkout and an admin releases the card once it is verified.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <span className="chip chip-neon">BEP20</span>
+              <span className="chip chip-neon">SOLANA</span>
+            </div>
+            <TermLink to="/shop" variant="ghost" className="mt-5 w-full py-2.5 text-[9px]">
+              OPEN_CHECKOUT
+            </TermLink>
+          </Panel>
+
+          {delivered ? (
+            <Panel accent="matrix" label="latest_delivery" className="p-5">
+              <p className="hud text-[8px]">card</p>
+              <p className="mt-1 font-mono text-sm font-bold tracking-[0.2em] text-matrix">
+                {delivered.cardName ?? 'DELIVERED_CARD'}
+              </p>
+              <p className="mt-3 font-mono text-[10px] tracking-[0.18em] text-ash/55 uppercase">
+                order #{delivered.id.slice(0, 8)} · {usd(delivered.amountUsd)} USDT
+              </p>
+              <Link
+                to="/dashboard"
+                className="mt-3 inline-block font-mono text-[9px] tracking-[0.2em] text-matrix/60 uppercase underline decoration-matrix/30 underline-offset-4 transition-colors hover:text-matrix"
+              >
+                details above ↑
+              </Link>
+            </Panel>
+          ) : (
+            <Panel label="latest_delivery" className="p-5 text-center">
+              <CreditCard className="mx-auto h-5 w-5 text-matrix/35" aria-hidden="true" />
+              <p className="mt-2 font-mono text-[10px] tracking-[0.2em] text-ash/45 uppercase">
+                no card delivered yet
+              </p>
+            </Panel>
+          )}
         </div>
       </div>
     </div>
