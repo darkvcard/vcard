@@ -76,6 +76,42 @@ create policy "operators read own orders" on public.orders
 create policy "operators create own pending orders" on public.orders
   for insert with check (auth.uid() = user_id and status = 'pending');
 
+-- Admins may purge an order from the console (DELETE action, destructive).
+create policy "admins delete orders" on public.orders
+  for delete using (public.is_admin(auth.uid()));
+
+-- ---------- card_units (real deliverable inventory) -------------------------
+-- One row per sellable card. `delivery_details` carries what the buyer gets:
+--   { "details": "<pasted card material>", "image_url": "<public storage url>" }
+create table if not exists public.card_units (
+  id uuid primary key default gen_random_uuid(),
+  card_id uuid not null references public.cards (id) on delete cascade,
+  delivery_details jsonb not null default '{}'::jsonb,
+  is_sold boolean not null default false,
+  order_id uuid references public.orders (id) on delete set null,
+  sold_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists card_units_card_id_idx on public.card_units (card_id);
+create index if not exists card_units_is_sold_idx on public.card_units (is_sold);
+
+alter table public.card_units enable row level security;
+
+-- Inventory is operator-only: buyers only ever see the unit copied into their order.
+create policy "admins read card units" on public.card_units
+  for select using (public.is_admin(auth.uid()));
+
+create policy "admins insert card units" on public.card_units
+  for insert with check (public.is_admin(auth.uid()));
+
+create policy "admins update card units" on public.card_units
+  for update using (public.is_admin(auth.uid()))
+  with check (public.is_admin(auth.uid()));
+
+create policy "admins delete card units" on public.card_units
+  for delete using (public.is_admin(auth.uid()));
+
 -- ---------- role bootstrap --------------------------------------------------
 -- Every new auth user gets a 'user' row; promote to admin manually.
 create or replace function public.handle_new_user()
@@ -108,6 +144,8 @@ set search_path = public
 as $$
 declare
   order_row public.orders%rowtype;
+  unit_row public.card_units%rowtype;
+  has_unit boolean := false;
 begin
   if not public.is_admin(auth.uid()) then
     raise exception 'not_authorized' using errcode = '42501';
@@ -119,17 +157,40 @@ begin
   end if;
 
   if p_approve then
+    -- Prefer a real uploaded unit; fall back to the demo payload when the
+    -- product has no inventory rows yet.
+    select * into unit_row
+      from public.card_units
+     where card_id = order_row.card_id
+       and is_sold = false
+     order by created_at
+     limit 1
+     for update;
+
+    has_unit := found;
+
+    if has_unit then
+      update public.card_units
+         set is_sold = true,
+             order_id = p_order_id,
+             sold_at = now()
+       where id = unit_row.id;
+    end if;
+
     update public.orders
        set status = 'completed',
-           delivery_details = coalesce(
-             delivery_details,
-             jsonb_build_object(
-               'brand', 'VISA',
-               'card_number', '4021 0000 0000 4021',
-               'expiry', '09/29',
-               'cvc', '417'
+           delivery_details = case
+             when has_unit then unit_row.delivery_details
+             else coalesce(
+               delivery_details,
+               jsonb_build_object(
+                 'brand', 'VISA',
+                 'card_number', '4021 0000 0000 4021',
+                 'expiry', '09/29',
+                 'cvc', '417'
+               )
              )
-           )
+           end
      where id = p_order_id
     returning * into order_row;
   else
@@ -145,3 +206,25 @@ $$;
 
 revoke all on function public.resolve_payment(uuid, boolean) from public;
 grant execute on function public.resolve_payment(uuid, boolean) to authenticated;
+
+-- ---------- storage: card screenshots ---------------------------------------
+-- Public bucket used by INVENTORY_MANAGEMENT to attach a card image to a unit.
+insert into storage.buckets (id, name, public)
+values ('card-images', 'card-images', true)
+on conflict (id) do update set public = true;
+
+create policy "card images are public" on storage.objects
+  for select using (bucket_id = 'card-images');
+
+create policy "admins upload card images" on storage.objects
+  for insert to authenticated
+  with check (bucket_id = 'card-images' and public.is_admin(auth.uid()));
+
+create policy "admins update card images" on storage.objects
+  for update to authenticated
+  using (bucket_id = 'card-images' and public.is_admin(auth.uid()))
+  with check (bucket_id = 'card-images' and public.is_admin(auth.uid()));
+
+create policy "admins delete card images" on storage.objects
+  for delete to authenticated
+  using (bucket_id = 'card-images' and public.is_admin(auth.uid()));
