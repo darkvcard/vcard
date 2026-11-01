@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <rect width="64" height="64" fill="#050505" />
+  <rect x="1" y="1" width="62" height="62" fill="none" stroke="#00ff41" stroke-opacity="0.55" />
+  <text x="32" y="39" text-anchor="middle" font-family="'Courier New', monospace" font-size="20" font-weight="bold" fill="#00ff41">vC</text>
+  <text x="32" y="53" text-anchor="middle" font-family="'Courier New', monospace" font-size="9" letter-spacing="2" fill="#9d00ff">CARD</text>
+</svg>
