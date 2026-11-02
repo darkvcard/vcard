@@ -276,8 +276,13 @@ export async function deleteOrder(orderId: string): Promise<void> {
 }
 
 /* -------------------------------------------------------------------------- */
-/* users: USER_MANAGEMENT (admin only, RPC + user_roles writes)                */
+/* users: USER_MANAGEMENT (admin only)                                        */
+/*   read  -> admin_get_users() RPC                                            */
+/*   write -> admin-user-actions edge function (service-role, admin verified)   */
 /* -------------------------------------------------------------------------- */
+
+/** Password the edge function accepts; mirrored in the UI before submitting. */
+export const MIN_PASSWORD_LENGTH = 8
 
 function toBool(value: unknown): boolean | null {
   if (typeof value === 'boolean') return value
@@ -291,8 +296,8 @@ function toBool(value: unknown): boolean | null {
 }
 
 /**
- * Tolerates both the canonical RPC shape (`is_admin`) and projects that expose
- * a plain `role` column (or a `user_id` / `email_address` alias).
+ * Tolerates the RPC shape (`is_admin`) plus projects exposing a plain `role`
+ * column (or `user_id` / `email_address` aliases).
  */
 export function mapAdminUser(row: Row): AdminUser {
   const flag = toBool(row.is_admin ?? row.isAdmin ?? row.admin)
@@ -328,50 +333,49 @@ export async function fetchAdminUsers(): Promise<AdminUser[]> {
     .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))
 }
 
-/**
- * Grant admin: inserts the `admin` row into `user_roles`. Projects where
- * `user_id` is the primary key (one row per operator) reject the insert, so the
- * existing row is upgraded instead.
- */
-export async function grantAdminRole(userId: string): Promise<void> {
-  if (!userId) throw new Error('user_required')
+/** Pulls `{ error, message }` out of a failed `functions.invoke` response. */
+async function functionFailure(error: unknown): Promise<string> {
+  const context = (error as { context?: Response }).context
+  if (context && typeof context.json === 'function') {
+    try {
+      const payload = (await context.clone().json()) as { error?: string; message?: string }
+      if (payload?.error && payload?.message) return `${payload.error} :: ${payload.message}`
+      if (payload?.error) return payload.error
+      if (payload?.message) return payload.message
+    } catch {
+      /* body was not JSON — fall through to the generic message */
+    }
+  }
 
-  const insert = await supabase.from('user_roles').insert({ user_id: userId, role: 'admin' })
-  if (!insert.error) return
-
-  const update = await supabase
-    .from('user_roles')
-    .update({ role: 'admin' })
-    .eq('user_id', userId)
-
-  if (update.error) throw insert.error
+  const message = errorMessage(error)
+  return /failed to send a request|not found|404/i.test(message)
+    ? `${message} · deploy the admin-user-actions edge function (supabase functions deploy admin-user-actions)`
+    : message
 }
 
-/**
- * Revoke admin: deletes the `admin` row from `user_roles` and leaves the
- * `user` row untouched. If the project keeps a single role row per operator,
- * that row is downgraded to `user` instead of being deleted so the account
- * never ends up role-less.
- */
-export async function revokeAdminRole(userId: string): Promise<void> {
-  if (!userId) throw new Error('user_required')
+async function invokeAdminUserAction(
+  body: { action: 'delete' | 'change_password'; userId: string; newPassword?: string },
+): Promise<void> {
+  const { data, error } = await supabase.functions.invoke('admin-user-actions', { body })
+  if (error) throw new Error(await functionFailure(error))
 
-  const removed = await supabase
-    .from('user_roles')
-    .delete()
-    .eq('user_id', userId)
-    .eq('role', 'admin')
-    .select('user_id')
-
-  if (removed.error) throw removed.error
-
-  const remaining = await supabase.from('user_roles').select('role').eq('user_id', userId)
-  if (remaining.error) throw remaining.error
-
-  if (((remaining.data ?? []) as Row[]).length === 0) {
-    const downgrade = await supabase.from('user_roles').insert({ user_id: userId, role: 'user' })
-    if (downgrade.error) throw downgrade.error
+  const payload = data as { ok?: boolean; error?: string; message?: string } | null
+  if (payload && payload.ok === false) {
+    throw new Error(payload.message ? `${payload.error} :: ${payload.message}` : (payload.error ?? 'action_failed'))
   }
+}
+
+/** Edge function → `auth.admin.deleteUser(userId)`. */
+export async function deleteAdminUser(userId: string): Promise<void> {
+  if (!userId) throw new Error('user_required')
+  await invokeAdminUserAction({ action: 'delete', userId })
+}
+
+/** Edge function → `auth.admin.updateUserById(userId, { password })`. */
+export async function changeAdminUserPassword(userId: string, newPassword: string): Promise<void> {
+  if (!userId) throw new Error('user_required')
+  if (newPassword.length < MIN_PASSWORD_LENGTH) throw new Error('password_too_short')
+  await invokeAdminUserAction({ action: 'change_password', userId, newPassword })
 }
 
 /* -------------------------------------------------------------------------- */
