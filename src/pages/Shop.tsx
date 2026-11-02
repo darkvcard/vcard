@@ -16,7 +16,7 @@ import { errorMessage, fetchCards } from '../lib/api'
 import { isSupabaseConfigured } from '../lib/supabase'
 import type { Card } from '../types/db'
 
-const filters = ['all', 'in_stock', 'out_of_stock'] as const
+const filters = ['all', 'in_stock', 'low_stock', 'out_of_stock'] as const
 type Filter = (typeof filters)[number]
 
 /** Offline fixtures so the themed UI stays reviewable before env vars exist. */
@@ -31,6 +31,7 @@ const DEMO_CARDS: Card[] = [
     loadLimit: 'up to 250 USDT',
     monthlyLimit: '2,500 / mo',
     perks: ['instant mint', '1 pan', 'burn on demand'],
+    imageUrl: null,
     raw: {},
   },
   {
@@ -43,6 +44,7 @@ const DEMO_CARDS: Card[] = [
     loadLimit: 'up to 1,200 USDT',
     monthlyLimit: '9,000 / mo',
     perks: ['5 pans', 'rotate anytime', 'shared balance'],
+    imageUrl: null,
     raw: {},
   },
   {
@@ -55,6 +57,7 @@ const DEMO_CARDS: Card[] = [
     loadLimit: 'up to 5,000 USDT',
     monthlyLimit: '25,000 / mo',
     perks: ['reloadable', '3-d secure', 'subscriptions ok'],
+    imageUrl: null,
     raw: {},
   },
   {
@@ -67,6 +70,7 @@ const DEMO_CARDS: Card[] = [
     loadLimit: 'up to 12,000 USDT',
     monthlyLimit: '60,000 / mo',
     perks: ['25 pans', 'per-card limits', 'csv export'],
+    imageUrl: null,
     raw: {},
   },
 ]
@@ -256,12 +260,21 @@ export function Shop() {
           {visible.map((card) => {
             const accent = accentFor(card)
             const soldOut = card.stockStatus === 'out_of_stock'
+            const lowStock = card.stockStatus === 'low_stock'
             return (
               <Panel
                 key={card.id}
                 accent={accent.panel}
                 className="flex flex-col p-5 transition-all duration-300 hover:-translate-y-1"
               >
+                {card.imageUrl ? (
+                  <img
+                    src={card.imageUrl}
+                    alt={`${card.name} card artwork`}
+                    loading="lazy"
+                    className={`mb-4 h-36 w-full border object-cover ${accent.border}`}
+                  />
+                ) : null}
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <h2 className={`font-mono text-base font-bold tracking-[0.2em] ${accent.text}`}>
@@ -271,8 +284,8 @@ export function Shop() {
                       {card.tagline || 'issuer slot'}
                     </p>
                   </div>
-                  <span className={`chip ${soldOut ? 'chip-alert' : ''}`}>
-                    {soldOut ? 'SOLD OUT' : 'IN STOCK'}
+                  <span className={`chip ${soldOut ? 'chip-alert' : lowStock ? 'chip-neon' : ''}`}>
+                    {soldOut ? 'SOLD OUT' : lowStock ? 'LOW STOCK' : 'IN STOCK'}
                   </span>
                 </div>
 
