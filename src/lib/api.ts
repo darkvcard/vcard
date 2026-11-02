@@ -1,6 +1,7 @@
 import { supabase } from './supabase'
 import type {
   Card,
+  CardUnit,
   DeliveryDetails,
   NewOrder,
   Order,
@@ -40,10 +41,16 @@ function normaliseStock(value: unknown): StockStatus {
 export function mapCard(row: Row): Card {
   return {
     id: String(row.id ?? ''),
-    name: str(row.name ?? row.title ?? row.tier, 'UNNAMED_CARD').toUpperCase(),
-    tagline: str(row.description ?? row.tagline ?? row.subtitle),
-    brand: str(row.brand ?? row.network ?? row.card_network, 'VISA').toUpperCase(),
-    priceUsd: num(row.price_usd ?? row.price ?? row.amount_usd),
+    name: str(
+      row.card_name ?? row.name ?? row.title ?? row.tier,
+      'UNNAMED_CARD',
+    ).toUpperCase(),
+    tagline: str(row.description ?? row.card_description ?? row.tagline ?? row.subtitle),
+    brand: str(
+      row.brand ?? row.card_brand ?? row.network ?? row.card_network,
+      'VISA',
+    ).toUpperCase(),
+    priceUsd: num(row.price_in_usd ?? row.price_usd ?? row.price ?? row.amount_usd),
     stockStatus: normaliseStock(row.stock_status ?? row.stock ?? row.inventory_status),
     loadLimit:
       row.load_limit !== undefined && row.load_limit !== null
@@ -89,8 +96,12 @@ export function mapOrder(row: Row): Order {
     id: String(row.id ?? ''),
     userId: str(row.user_id),
     cardId: str(row.card_id),
-    cardName: nestedCard ? str(nestedCard.name) : str(row.card_name) || null,
-    amountUsd: num(row.amount_usd ?? row.amount ?? row.price_usd),
+    cardName: nestedCard
+      ? str(nestedCard.card_name ?? nestedCard.name) || null
+      : str(row.card_name ?? row.card_title) || null,
+    amountUsd: num(
+      row.amount_usd ?? row.price_in_usd ?? row.amount ?? row.price_usd,
+    ),
     cryptoMethod: str(row.crypto_method ?? row.payment_method) || null,
     txid: str(row.txid ?? row.tx_hash) || null,
     status: normaliseStatus(row.status),
@@ -150,7 +161,7 @@ async function fetchCardNames(): Promise<Map<string, string>> {
   const { data } = await supabase.from('cards').select('id, name')
   const map = new Map<string, string>()
   for (const row of (data ?? []) as Row[]) {
-    map.set(String(row.id ?? ''), str(row.name).toUpperCase())
+    map.set(String(row.id ?? ''), str(row.card_name ?? row.name).toUpperCase())
   }
   return map
 }
@@ -166,6 +177,171 @@ export async function resolvePayment(orderId: string, approve: boolean): Promise
     p_order_id: orderId,
     p_approve: approve,
   })
+  if (error) throw error
+}
+
+/** Admin hard-delete: the row is removed, no audit trail left in `orders`. */
+export async function deleteOrder(orderId: string): Promise<void> {
+  const { error } = await supabase.from('orders').delete().eq('id', orderId)
+  if (error) throw error
+}
+
+/* -------------------------------------------------------------------------- */
+/* inventory: card_units + storage                                             */
+/* -------------------------------------------------------------------------- */
+
+/** Public bucket that stores the card screenshots pasted in INVENTORY_MANAGEMENT. */
+export const CARD_IMAGE_BUCKET = 'card-images'
+
+const DETAIL_TEXT_KEYS = [
+  'details',
+  'text',
+  'card_details',
+  'detail',
+  'value',
+  'note',
+  'content',
+]
+
+const DETAIL_IMAGE_KEYS = [
+  'image_url',
+  'image',
+  'imageUrl',
+  'card_image',
+  'screenshot_url',
+  'preview_url',
+]
+
+function pickString(row: Row, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = row[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+    if (typeof value === 'number') return String(value)
+  }
+  return null
+}
+
+/** Plain-text card material of a delivery payload (object, JSON string or text). */
+export function deliveryText(details: DeliveryDetails): string | null {
+  if (!details) return null
+  if (typeof details === 'string') return details
+  return pickString(details as Row, DETAIL_TEXT_KEYS)
+}
+
+/** Uploaded screenshot URL attached to a delivery payload, when present. */
+export function deliveryImageUrl(details: DeliveryDetails): string | null {
+  if (!details || typeof details !== 'object') return null
+  const candidate = pickString(details as Row, DETAIL_IMAGE_KEYS)
+  return candidate && /^https?:\/\//i.test(candidate) ? candidate : null
+}
+
+function normaliseSold(row: Row): boolean {
+  const flag = row.is_sold ?? row.sold ?? row.used
+  if (flag === true || flag === 1) return true
+  const text = str(flag).toLowerCase()
+  if (text === 'true' || text === 't' || text === '1' || text === 'yes') return true
+
+  if (row.sold_at || row.used_at || row.redeemed_at) return true
+  if (row.order_id || row.sold_order_id) return true
+
+  const status = str(row.status ?? row.state).toLowerCase()
+  return status === 'sold' || status === 'used' || status === 'delivered'
+}
+
+export function mapCardUnit(row: Row): CardUnit {
+  const delivery = normaliseDelivery(
+    row.delivery_details ?? row.details ?? row.card_details ?? row.payload,
+  )
+  return {
+    id: String(row.id ?? ''),
+    cardId: str(row.card_id ?? row.product_id ?? row.card ?? row.cards_id),
+    deliveryDetails: delivery,
+    details: deliveryText(delivery) ?? str(row.details ?? row.card_details),
+    imageUrl:
+      deliveryImageUrl(delivery) ??
+      pickString(row, DETAIL_IMAGE_KEYS) ??
+      null,
+    sold: normaliseSold(row),
+    orderId: str(row.order_id ?? row.sold_order_id) || null,
+    createdAt: str(row.created_at ?? row.inserted_at) || null,
+    raw: row,
+  }
+}
+
+/** Every unit for one card product; sold ones are filtered in the UI. */
+export async function fetchCardUnits(cardId: string): Promise<CardUnit[]> {
+  const { data, error } = await supabase
+    .from('card_units')
+    .select('*')
+    .eq('card_id', cardId)
+
+  if (error) throw error
+  return ((data ?? []) as Row[])
+    .map(mapCardUnit)
+    .sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? ''))
+}
+
+/** Uploads a card screenshot and returns its public URL. */
+export async function uploadCardImage(file: File): Promise<string> {
+  const extension = file.name.split('.').pop()?.toLowerCase() || 'png'
+  const suffix =
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : String(Date.now())
+  const path = `${Date.now()}-${suffix}.${extension}`
+
+  const { error } = await supabase.storage
+    .from(CARD_IMAGE_BUCKET)
+    .upload(path, file, {
+      cacheControl: '3600',
+      upsert: false,
+      contentType: file.type || 'image/png',
+    })
+  if (error) throw error
+
+  const { data } = supabase.storage.from(CARD_IMAGE_BUCKET).getPublicUrl(path)
+  const publicUrl = data?.publicUrl
+  if (!publicUrl) throw new Error('public_url_unavailable')
+  return publicUrl
+}
+
+/**
+ * Inserts one `card_units` row per pasted line. `delivery_details` keeps the
+ * pasted material plus the uploaded screenshot URL; if the column is plain
+ * `text` instead of `jsonb` the insert is retried with a JSON string.
+ */
+export async function createCardUnits(
+  cardId: string,
+  lines: string[],
+  imageUrl: string | null,
+): Promise<number> {
+  const clean = lines.map((line) => line.trim()).filter(Boolean)
+  if (!cardId) throw new Error('card_required')
+  if (clean.length === 0) throw new Error('details_required')
+
+  const asObject = clean.map((line) => ({
+    card_id: cardId,
+    delivery_details: { details: line, text: line, image_url: imageUrl },
+  }))
+  const asString = clean.map((line) => ({
+    card_id: cardId,
+    delivery_details: JSON.stringify({
+      details: line,
+      text: line,
+      image_url: imageUrl,
+    }),
+  }))
+
+  const first = await supabase.from('card_units').insert(asObject)
+  if (!first.error) return clean.length
+
+  const retry = await supabase.from('card_units').insert(asString)
+  if (retry.error) throw first.error
+  return clean.length
+}
+
+export async function deleteCardUnit(unitId: string): Promise<void> {
+  const { error } = await supabase.from('card_units').delete().eq('id', unitId)
   if (error) throw error
 }
 

@@ -4,17 +4,27 @@ import {
   CheckCircle2,
   ClipboardCopy,
   Loader2,
+  Package,
   RefreshCw,
   ShieldCheck,
+  Trash2,
   Users,
   Wallet,
   XCircle,
 } from 'lucide-react'
 import { GlitchText, Panel } from '../components/GlitchText'
+import { InventoryManager } from '../components/InventoryManager'
 import { TermButton } from '../components/TermButton'
 import { useToast } from '../hooks/useToast'
-import { errorMessage, fetchOrders, resolvePayment } from '../lib/api'
+import { deleteOrder, errorMessage, fetchOrders, resolvePayment } from '../lib/api'
 import type { Order, OrderStatus } from '../types/db'
+
+const TABS = [
+  { id: 'PAYMENT_QUEUE', label: 'PAYMENT_QUEUE', icon: Wallet },
+  { id: 'INVENTORY_MANAGEMENT', label: 'INVENTORY_MANAGEMENT', icon: Package },
+] as const
+
+type TabId = (typeof TABS)[number]['id']
 
 const usd = (value: number) =>
   value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -38,11 +48,14 @@ function formatDate(value: string | null) {
 
 export function Admin() {
   const toast = useToast()
+  const [tab, setTab] = useState<TabId>('PAYMENT_QUEUE')
   const [orders, setOrders] = useState<Order[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [nonce, setNonce] = useState(0)
-  const [approving, setApproving] = useState<string | null>(null)
+  const [busy, setBusy] = useState<{ id: string; action: 'approve' | 'decline' } | null>(null)
+  const [confirming, setConfirming] = useState<Order | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   const loading = orders === null && !error
 
@@ -82,16 +95,50 @@ export function Admin() {
     }
   }, [orders])
 
-  async function approve(order: Order) {
-    setApproving(order.id)
+  async function resolve(order: Order, approve: boolean) {
+    setBusy({ id: order.id, action: approve ? 'approve' : 'decline' })
     try {
-      await resolvePayment(order.id, true)
-      toast.push(`order ${shortId(order.id)} approved — card released`, 'success')
+      await resolvePayment(order.id, approve)
+      const nextStatus: OrderStatus = approve ? 'completed' : 'failed'
+      setOrders((current) =>
+        current
+          ? current.map((row) => (row.id === order.id ? { ...row, status: nextStatus } : row))
+          : current,
+      )
+      toast.push(
+        approve
+          ? `order ${shortId(order.id)} approved — card released`
+          : `order ${shortId(order.id)} declined — marked failed`,
+        approve ? 'success' : 'error',
+      )
       setNonce((value) => value + 1)
     } catch (caught) {
-      toast.push(`approval failed :: ${errorMessage(caught)}`, 'error')
+      toast.push(
+        `${approve ? 'approval' : 'decline'} failed :: ${errorMessage(caught)}`,
+        'error',
+      )
     } finally {
-      setApproving(null)
+      setBusy(null)
+    }
+  }
+
+  async function confirmDelete() {
+    const order = confirming
+    if (!order) return
+
+    setDeleting(true)
+    try {
+      await deleteOrder(order.id)
+      setOrders((current) =>
+        current ? current.filter((row) => row.id !== order.id) : current,
+      )
+      toast.push(`order ${shortId(order.id)} deleted`, 'success')
+      setConfirming(null)
+      setNonce((value) => value + 1)
+    } catch (caught) {
+      toast.push(`delete failed :: ${errorMessage(caught)}`, 'error')
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -138,8 +185,41 @@ export function Admin() {
         </div>
       </header>
 
+      {/* section tabs */}
+      <nav
+        aria-label="Admin sections"
+        className="mt-6 flex flex-wrap items-center gap-2 border-b border-matrix/15 pb-3"
+      >
+        {TABS.map((item) => {
+          const Icon = item.icon
+          const active = tab === item.id
+          return (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => setTab(item.id)}
+              aria-pressed={active}
+              className={`flex cursor-pointer items-center gap-2 border px-3 py-1.5 font-mono text-[10px] tracking-[0.25em] uppercase transition-all ${
+                active
+                  ? 'border-matrix/70 bg-matrix/10 text-matrix shadow-[0_0_16px_-6px_#00ff41]'
+                  : 'border-white/10 text-ash/60 hover:border-matrix/40 hover:text-matrix/80'
+              }`}
+            >
+              <Icon className="h-3 w-3" aria-hidden="true" />
+              {item.label}
+            </button>
+          )
+        })}
+      </nav>
+
       {/* metrics */}
-      <div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div
+        className={
+          tab === 'PAYMENT_QUEUE'
+            ? 'mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4'
+            : 'hidden'
+        }
+      >
         {[
           { icon: Wallet, label: 'settled_volume', value: usd(metrics.volume), unit: 'USDT' },
           { icon: Loader2, label: 'pending_approvals', value: String(metrics.pending), unit: 'orders', accent: metrics.pending > 0 },
@@ -175,7 +255,7 @@ export function Admin() {
       </div>
 
       {/* orders table */}
-      <div className="mt-6">
+      <div className={tab === 'PAYMENT_QUEUE' ? 'mt-6' : 'hidden'}>
         <Panel label="payment_queue" className="p-0">
           <div className="flex items-center justify-between px-4 py-3">
             <h2 className="font-mono text-[11px] font-bold tracking-[0.25em] text-matrix/80">
@@ -263,31 +343,62 @@ export function Admin() {
                         </span>
                       </td>
                       <td className="text-right whitespace-nowrap">
-                        {order.status === 'pending' ? (
+                        <div className="flex flex-wrap items-center justify-end gap-1.5">
+                          {order.status === 'pending' ? (
+                            <>
+                              <TermButton
+                                className="px-3 py-1.5 text-[9px]"
+                                onClick={() => void resolve(order, true)}
+                                disabled={busy?.id === order.id}
+                                aria-label={`Approve order ${order.id}`}
+                              >
+                                {busy?.id === order.id && busy.action === 'approve' ? (
+                                  <>
+                                    <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                                    SENDING
+                                  </>
+                                ) : (
+                                  'APPROVE'
+                                )}
+                              </TermButton>
+                              <TermButton
+                                variant="alert"
+                                className="px-3 py-1.5 text-[9px]"
+                                onClick={() => void resolve(order, false)}
+                                disabled={busy?.id === order.id}
+                                aria-label={`Decline order ${order.id}`}
+                              >
+                                {busy?.id === order.id && busy.action === 'decline' ? (
+                                  <>
+                                    <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                                    SENDING
+                                  </>
+                                ) : (
+                                  'DECLINE'
+                                )}
+                              </TermButton>
+                            </>
+                          ) : order.status === 'completed' ? (
+                            <span className="inline-flex items-center gap-1 font-mono text-[9px] tracking-[0.2em] text-matrix/50 uppercase">
+                              <CheckCircle2 className="h-3 w-3" aria-hidden="true" /> settled
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 font-mono text-[9px] tracking-[0.2em] text-[#ff849b]/70 uppercase">
+                              <XCircle className="h-3 w-3" aria-hidden="true" /> rejected
+                            </span>
+                          )}
                           <TermButton
-                            className="px-3 py-1.5 text-[9px]"
-                            onClick={() => void approve(order)}
-                            disabled={approving === order.id}
-                            aria-label={`Approve order ${order.id}`}
+                            variant="ghost"
+                            className="px-2.5 py-1.5 text-[9px]"
+                            onClick={() => setConfirming(order)}
+                            disabled={busy?.id === order.id}
+                            aria-label={`Delete order ${order.id}`}
+                            title="Permanently delete this order"
                           >
-                            {approving === order.id ? (
-                              <>
-                                <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
-                                SENDING
-                              </>
-                            ) : (
-                              'APPROVE'
-                            )}
+                            <Trash2 className="h-3 w-3" aria-hidden="true" />
+                            DELETE
                           </TermButton>
-                        ) : order.status === 'completed' ? (
-                          <span className="inline-flex items-center gap-1 font-mono text-[9px] tracking-[0.2em] text-matrix/50 uppercase">
-                            <CheckCircle2 className="h-3 w-3" aria-hidden="true" /> settled
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 font-mono text-[9px] tracking-[0.2em] text-[#ff849b]/70 uppercase">
-                            <XCircle className="h-3 w-3" aria-hidden="true" /> rejected
-                          </span>
-                        )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -302,11 +413,69 @@ export function Admin() {
               resolve_payment is SECURITY DEFINER · row level security enforced
             </p>
             <p className="font-mono text-[9px] tracking-[0.18em] text-ash/30 uppercase">
-              approve → status=completed + delivery_details
+              approve → completed · decline → failed · delete → row purged
             </p>
           </div>
         </Panel>
       </div>
+
+      {tab === 'INVENTORY_MANAGEMENT' ? (
+        <div className="mt-6">
+          <InventoryManager />
+        </div>
+      ) : null}
+
+      {confirming ? (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+          <button
+            type="button"
+            aria-label="Cancel delete"
+            className="absolute inset-0 cursor-default"
+            onClick={() => {
+              if (!deleting) setConfirming(null)
+            }}
+            tabIndex={-1}
+          />
+          <Panel accent="alert" label="confirm_delete" className="relative w-full max-w-md p-5">
+            <p className="flex items-start gap-2 font-mono text-[10.5px] leading-relaxed tracking-[0.15em] text-[#ff849b] uppercase">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              delete order {shortId(confirming.id)} permanently?
+            </p>
+            <p className="mt-3 border border-white/5 bg-black/40 px-3 py-2 font-mono text-[10px] tracking-[0.12em] text-ash/60 uppercase">
+              {confirming.cardName ?? 'unknown_card'} · {usd(confirming.amountUsd)} USDT ·{' '}
+              {confirming.status}
+            </p>
+            <p className="mt-2 font-mono text-[9px] leading-relaxed tracking-[0.18em] text-ash/35 uppercase">
+              the row is removed from public.orders · this cannot be undone
+            </p>
+            <div className="mt-5 flex flex-col gap-2 sm:flex-row">
+              <TermButton
+                variant="alert"
+                className="flex-1 py-2"
+                onClick={() => void confirmDelete()}
+                disabled={deleting}
+              >
+                {deleting ? (
+                  <>
+                    <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                    DELETING…
+                  </>
+                ) : (
+                  'CONFIRM_DELETE'
+                )}
+              </TermButton>
+              <TermButton
+                variant="ghost"
+                className="py-2 sm:w-32"
+                onClick={() => setConfirming(null)}
+                disabled={deleting}
+              >
+                CANCEL
+              </TermButton>
+            </div>
+          </Panel>
+        </div>
+      ) : null}
     </div>
   )
 }

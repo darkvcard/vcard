@@ -30,6 +30,37 @@ function isLikelyTxid(value: string) {
   return value.trim().length >= 16
 }
 
+/**
+ * The raw Supabase row is the source of truth for the checkout header: rows use
+ * `card_name` / `price_in_usd`, and older fixtures use `name` / `price_usd`.
+ * Falling back to the raw row keeps the dialog from ever printing
+ * "UNNAMED_CARD" + "0.00 USDT" for a card the shop is listing.
+ */
+function checkoutView(card: Card) {
+  const raw = (card.raw ?? {}) as Record<string, unknown>
+
+  const rawName = ['card_name', 'name', 'title', 'tier']
+    .map((key) => raw[key])
+    .find(
+      (value): value is string =>
+        typeof value === 'string' && value.trim().length > 0,
+    )
+
+  const rawPrice = ['price_in_usd', 'price_usd', 'price', 'amount_usd']
+    .map((key) => Number.parseFloat(String(raw[key] ?? '')))
+    .find((value) => Number.isFinite(value))
+
+  return {
+    name:
+      card.name && card.name !== 'UNNAMED_CARD'
+        ? card.name
+        : rawName
+          ? rawName.trim().toUpperCase()
+          : 'CARD',
+    priceUsd: card.priceUsd > 0 ? card.priceUsd : (rawPrice ?? 0),
+  }
+}
+
 export function CheckoutDialog({ card, onClose }: CheckoutDialogProps) {
   const { user } = useAuth()
   const toast = useToast()
@@ -63,6 +94,7 @@ export function CheckoutDialog({ card, onClose }: CheckoutDialogProps) {
 
   if (!card) return null
 
+  const view = checkoutView(card)
   const soldOut = card.stockStatus === 'out_of_stock'
 
   async function copyAddress() {
@@ -123,7 +155,7 @@ export function CheckoutDialog({ card, onClose }: CheckoutDialogProps) {
       await createOrder({
         user_id: user.id,
         card_id: card.id,
-        amount_usd: card.priceUsd,
+        amount_usd: view.priceUsd,
         crypto_method: method.label,
         txid: cleanTxid,
         status: 'pending',
@@ -141,7 +173,7 @@ export function CheckoutDialog({ card, onClose }: CheckoutDialogProps) {
   }
 
   return (
-    <div className="fixed inset-0 z-[90] flex items-center justify-center overflow-y-auto bg-black/80 p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[90] flex items-start justify-center overflow-y-auto overscroll-contain bg-black/80 p-3 backdrop-blur-sm sm:items-center sm:p-4">
       <button
         type="button"
         aria-label="Close checkout"
@@ -154,29 +186,29 @@ export function CheckoutDialog({ card, onClose }: CheckoutDialogProps) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="checkout-title"
-        className="relative w-full max-w-2xl"
+        className="relative my-auto max-h-[90vh] w-full max-w-2xl overflow-y-auto overscroll-contain px-1 py-3"
       >
-        <Panel label="checkout_terminal" className="relative overflow-hidden p-5 sm:p-7">
+        <Panel label="checkout_terminal" className="relative p-4 sm:p-6 md:p-7">
           <div className="scan-sweep" aria-hidden="true" />
 
-          <div className="flex items-start justify-between gap-4">
-            <div>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
               <p className="hud">// order_intent</p>
               <h2
                 id="checkout-title"
-                className="mt-1 font-mono text-lg font-bold tracking-[0.2em] text-matrix"
+                className="mt-1 truncate font-mono text-base font-bold tracking-[0.2em] text-matrix sm:text-lg"
               >
-                {card.name}
+                {view.name}
               </h2>
               <p className="mt-1 font-mono text-[10px] tracking-[0.2em] text-ash/50 uppercase">
                 {card.brand} · settles in USDT
               </p>
             </div>
-            <div className="flex items-center gap-3">
-              <div className="text-right">
+            <div className="flex items-start justify-between gap-3 sm:justify-end">
+              <div className="text-left sm:text-right">
                 <p className="hud text-[8px] text-matrix/40">amount_due</p>
-                <p className="font-mono text-xl font-bold text-matrix text-glow">
-                  {usd(card.priceUsd)}
+                <p className="font-mono text-lg font-bold text-matrix text-glow sm:text-xl">
+                  {usd(view.priceUsd)}
                   <span className="ml-1 text-[9px] tracking-[0.2em] text-ash/50">USDT</span>
                 </p>
               </div>
@@ -277,7 +309,7 @@ export function CheckoutDialog({ card, onClose }: CheckoutDialogProps) {
               className="field-term"
             />
             <p className="mt-1.5 font-mono text-[9px] tracking-[0.18em] text-ash/35 uppercase">
-              send exactly {usd(card.priceUsd)} USDT, then paste the hash · verifier checks it manually
+              send exactly {usd(view.priceUsd)} USDT, then paste the hash · verifier checks it manually
             </p>
           </div>
 

@@ -20,6 +20,8 @@ type TermButtonProps = {
   type?: 'button' | 'submit'
   disabled?: boolean
   fullWidth?: boolean
+  /** Native tooltip, useful for icon-only actions. */
+  title?: string
 }
 
 function classes(variant: Variant, fullWidth: boolean, className: string) {
@@ -37,12 +39,14 @@ export function TermButton({
   type = 'button',
   disabled = false,
   fullWidth = false,
+  title,
 }: TermButtonProps) {
   return (
     <button
       type={type}
       onClick={onClick}
       disabled={disabled}
+      title={title}
       className={classes(variant, fullWidth, className)}
     >
       {prompt ? (

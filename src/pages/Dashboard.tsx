@@ -16,7 +16,7 @@ import { TermButton, TermLink } from '../components/TermButton'
 import { VirtualCard } from '../components/VirtualCard'
 import { useAuth } from '../hooks/useAuth'
 import { useToast } from '../hooks/useToast'
-import { errorMessage, fetchOrders } from '../lib/api'
+import { errorMessage, fetchOrders, deliveryImageUrl, deliveryText } from '../lib/api'
 import type { DeliveryDetails, Order, OrderStatus } from '../types/db'
 
 const usd = (value: number) =>
@@ -210,6 +210,8 @@ export function Dashboard() {
                   const Icon = statusIcons[order.status]
                   const details = order.deliveryDetails
                   const isObject = details && typeof details === 'object'
+                  const unitText = deliveryText(details)
+                  const unitImage = deliveryImageUrl(details)
                   return (
                     <li key={order.id} className="px-4 py-4">
                       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -255,7 +257,27 @@ export function Dashboard() {
                       {order.status === 'completed' && details ? (
                         <div className="mt-3 border border-matrix/30 bg-matrix/[0.04] p-3">
                           <p className="hud text-[8px] text-matrix/50">delivered_card_details</p>
-                          {isObject ? (
+                          {unitText ? (
+                            <p className="mt-2 font-mono text-[10.5px] leading-relaxed break-words whitespace-pre-wrap text-matrix/85">
+                              {unitText}
+                            </p>
+                          ) : null}
+                          {unitImage ? (
+                            <a
+                              href={unitImage}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-2 inline-block border border-matrix/25 transition-colors hover:border-matrix/60"
+                            >
+                              <img
+                                src={unitImage}
+                                alt="delivered card screenshot"
+                                loading="lazy"
+                                className="max-h-40 w-auto object-contain"
+                              />
+                            </a>
+                          ) : null}
+                          {!unitText && !unitImage && isObject ? (
                             <div className="mt-2 grid gap-2 sm:grid-cols-2">
                               {(
                                 [
@@ -283,11 +305,11 @@ export function Dashboard() {
                                 ) : null,
                               )}
                             </div>
-                          ) : (
+                          ) : !unitText && !unitImage ? (
                             <p className="mt-2 font-mono text-[10.5px] leading-relaxed break-all text-matrix/85">
                               {String(details)}
                             </p>
-                          )}
+                          ) : null}
                         </div>
                       ) : null}
 

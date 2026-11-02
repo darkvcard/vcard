@@ -41,3 +41,22 @@ export type NewOrder = {
   txid: string
   status: 'pending'
 }
+
+/**
+ * One purchasable unit of a card product (`card_units`).
+ * `deliveryDetails` holds the real card material handed to the buyer and may
+ * also carry the uploaded card screenshot (`image_url`).
+ */
+export type CardUnit = {
+  id: string
+  cardId: string
+  deliveryDetails: DeliveryDetails
+  /** Plain-text card material extracted from `delivery_details`. */
+  details: string
+  imageUrl: string | null
+  sold: boolean
+  orderId: string | null
+  createdAt: string | null
+  raw: Record<string, unknown>
+}
+
