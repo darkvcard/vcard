@@ -95,9 +95,10 @@ so `signUp` returns a session immediately.
   and sorts by price.
 - Loading skeleton, error panel with `RETRY_SYNC`, empty-search state, search +
   `ALL / IN STOCK / LOW STOCK / OUT OF STOCK` filters and a `SYNC` button.
-- A product with `image_url` renders the full artwork inside a card-shaped
-  (`aspect-[1.6/1]`) frame with `object-contain`, so nothing is cropped;
-  products without artwork keep the CSS-drawn panel.
+- A product with `image_url` fills a card-shaped `aspect-[1.6/1]` frame
+  (`overflow-hidden rounded-xl`) with `h-full w-full object-cover`, so the
+  artwork covers the whole frame with no side gaps; products without artwork
+  keep the CSS-drawn panel.
 - `cards.description` is the loaded balance: the shop prints it as a large
   glowing `BALANCE: $50` line (bare numbers get a `$` prefix) instead of prose.
 - Stock is shown once per card — the chip under the details
@@ -107,10 +108,13 @@ so `signUp` returns a session immediately.
 ### 3. Checkout — `src/components/CheckoutDialog.tsx`
 
 - Terminal modal (`role="dialog"`, Esc/backdrop close, scroll lock) opened from
-  `BUY NOW`. The overlay is `fixed inset-0 overflow-y-auto`, the panel is
-  capped at `max-h-[90vh]` and its body (`min-h-0 flex-1 overflow-y-auto`)
-  scrolls independently, while the TXID field, balance, `CONFIRM PAYMENT` and
-  `ABORT` footer stay reachable on small screens.
+  `BUY NOW`. The overlay is
+  `fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-black/80 p-4 sm:p-6`
+  and the panel is
+  `relative my-8 flex w-full max-w-lg flex-col rounded-lg border border-green-500/30 bg-black sm:my-12`
+  — no `max-h`, `h-screen` or `overflow-hidden`, so the whole overlay scrolls
+  naturally and the QR block, TXID field, balance and `CONFIRM PAYMENT` footer
+  are always reachable.
 - Header shows the selected product exactly as listed: `mapCard` reads
   `card_name`/`price_in_usd` (falling back to `name`/`price_usd`) and the dialog
   re-reads `card.raw` before printing, so it can never fall back to
