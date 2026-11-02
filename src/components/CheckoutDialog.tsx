@@ -91,12 +91,30 @@ export function CheckoutDialog({ card, onClose }: CheckoutDialogProps) {
       if (event.key === 'Escape') onClose()
     }
     document.addEventListener('keydown', onKeyDown)
-    const previousOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
+
+    /*
+     * Body scroll lock: the page behind the dialog must not scroll, but the
+     * dialog body owns its own scrollbar. Locking only <body> is not reliable
+     * (this shell sets `body { overflow-x: hidden }`, so the overflow does not
+     * propagate to the viewport) — lock the document element as well. The lock
+     * is always released on cleanup (close, card switch or unmount) and falls
+     * back to `unset` so the page can never get stuck unscrollable.
+     */
+    const { body, documentElement } = document
+    const previousBodyOverflow = body.style.overflow
+    const previousHtmlOverflow = documentElement.style.overflow
+    const previousPaddingRight = body.style.paddingRight
+    const scrollbarGap = window.innerWidth - documentElement.clientWidth
+
+    body.style.overflow = 'hidden'
+    documentElement.style.overflow = 'hidden'
+    if (scrollbarGap > 0) body.style.paddingRight = `${scrollbarGap}px`
 
     return () => {
       document.removeEventListener('keydown', onKeyDown)
-      document.body.style.overflow = previousOverflow
+      body.style.overflow = previousBodyOverflow || 'unset'
+      documentElement.style.overflow = previousHtmlOverflow || 'unset'
+      body.style.paddingRight = previousPaddingRight
     }
   }, [open, onClose])
 
@@ -182,7 +200,7 @@ export function CheckoutDialog({ card, onClose }: CheckoutDialogProps) {
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-black/80 p-4 sm:p-6"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 sm:p-6"
       onClick={(event) => {
         if (event.target === event.currentTarget) onClose()
       }}
@@ -191,11 +209,11 @@ export function CheckoutDialog({ card, onClose }: CheckoutDialogProps) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="checkout-title"
-        className="relative my-8 flex w-full max-w-lg flex-col rounded-lg border border-green-500/30 bg-black sm:my-12"
+        className="relative w-full max-w-lg max-h-[90vh] flex flex-col rounded-lg border border-green-500/30 bg-black shadow-2xl"
       >
         <div className="scan-sweep" aria-hidden="true" />
 
-        <div className="flex items-start justify-between gap-3 border-b border-white/10 p-5">
+        <div className="shrink-0 flex items-start justify-between gap-3 border-b border-white/10 p-5">
           <div className="min-w-0">
             <p className="hud">// checkout_terminal</p>
             <h2
@@ -237,7 +255,7 @@ export function CheckoutDialog({ card, onClose }: CheckoutDialogProps) {
           </div>
         </div>
 
-        <div className="space-y-5 p-5">
+        <div className="overflow-y-auto flex-1 p-5 space-y-5">
           <div>
             <label htmlFor="crypto-method" className="field-label">
               payment_rail
@@ -334,7 +352,7 @@ export function CheckoutDialog({ card, onClose }: CheckoutDialogProps) {
             ) : null}
         </div>
 
-        <div className="border-t border-white/10 p-5">
+        <div className="shrink-0 border-t border-white/10 p-5">
           <div className="flex flex-col gap-2 sm:flex-row">
             <TermButton
               className="flex-1 py-3"
