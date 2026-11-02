@@ -95,21 +95,27 @@ so `signUp` returns a session immediately.
   and sorts by price.
 - Loading skeleton, error panel with `RETRY_SYNC`, empty-search state, search +
   `ALL / IN STOCK / LOW STOCK / OUT OF STOCK` filters and a `SYNC` button.
-- A product with `image_url` renders the uploaded artwork at the top of its
-  card; products without artwork keep the CSS-drawn panel.
-- `stock_status === 'out_of_stock'` renders a red **SOLD OUT** chip and a
-disabled `SOLD OUT` button.
+- A product with `image_url` renders the full artwork inside a card-shaped
+  (`aspect-[1.6/1]`) frame with `object-contain`, so nothing is cropped;
+  products without artwork keep the CSS-drawn panel.
+- `cards.description` is the loaded balance: the shop prints it as a large
+  glowing `BALANCE: $50` line (bare numbers get a `$` prefix) instead of prose.
+- Stock is shown once per card — the chip under the details
+  (`IN STOCK` / `LOW STOCK` / `SOLD OUT`), with a red disabled button when sold
+  out.
 
 ### 3. Checkout — `src/components/CheckoutDialog.tsx`
 
 - Terminal modal (`role="dialog"`, Esc/backdrop close, scroll lock) opened from
-  `BUY NOW`. The dialog is capped at `max-h-[90vh]` and scrolls internally
-  (`overflow-y-auto`), so the payment rail, QR, TXID field and confirm buttons
-  stay reachable on small screens.
+  `BUY NOW`. The overlay is `fixed inset-0 overflow-y-auto`, the panel is
+  capped at `max-h-[90vh]` and its body (`min-h-0 flex-1 overflow-y-auto`)
+  scrolls independently, while the TXID field, balance, `CONFIRM PAYMENT` and
+  `ABORT` footer stay reachable on small screens.
 - Header shows the selected product exactly as listed: `mapCard` reads
   `card_name`/`price_in_usd` (falling back to `name`/`price_usd`) and the dialog
   re-reads `card.raw` before printing, so it can never fall back to
-  `UNNAMED_CARD` / `0.00 USDT` for a listed card.
+  `UNNAMED_CARD` / `0.00 USDT` for a listed card. The loaded balance is printed
+  as a glowing `BALANCE: $50` line.
 - Rail dropdown: **USDT - BEP20** (`0x35aec7E35F65ea227e49fDd321709D52Ada389E4`)
   and **USDT - Solana** (`3mjR2gV3MJrudjus9yBuh3EtSMw6Ca5BVFcYiMDa1VjQ`), with a
   live `qrcode.react` QR, network/confirmation hints and a copy-address button.
@@ -123,6 +129,10 @@ disabled `SOLD OUT` button.
 ### 4. Dashboard — `src/pages/Dashboard.tsx`
 
 - Fetches `orders` filtered by `user_id` (newest first client-side).
+- `orders` only stores `card_id`; `fetchOrders()` joins `cards` client-side
+  (`id, name` → legacy `id, card_name` → `select('*')`) and fills
+  `order.cardName`, so the log prints the real product name instead of
+  `UNKNOWN_CARD` (deleted products fall back to `CARD_<short id>`).
 - Aggregate panel: settled spend, orders / pending / delivered counts, clearance.
 - Order log with status chips (`PENDING`, `COMPLETED`, `FAILED`), crypto method,
   short id, timestamp and copyable TXID.
@@ -160,7 +170,8 @@ disabled `SOLD OUT` button.
 #### PRODUCT_MANAGEMENT — `src/components/ProductManager.tsx`
 
 - Creates and edits rows in `cards`: **card_name**, **card_type**
-  (`VISA` / `MASTERCARD` / `AMEX`), **price_usd**, **description**,
+  (`VISA` / `MASTERCARD` / `AMEX`), **price_usd**, **card_balance** (stored in
+  `cards.description`, rendered as `BALANCE: $100` in the shop/checkout),
   **stock_status** (`in_stock` / `low_stock` / `out_of_stock`) and an optional
   `<input type="file" accept="image/*" />`.
 - The artwork is uploaded to the **`card-images`** bucket and the public URL is
