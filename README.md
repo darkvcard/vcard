@@ -47,6 +47,18 @@ It creates everything the frontend expects:
 | `cards`      | `id, name, description, brand, price_usd, stock_status, load_limit, monthly_limit, perks`                  |
 | `user_roles` | `user_id, role` (`user` / `admin`)                                                                         |
 | `orders`     | `id, user_id, card_id, amount_usd, crypto_method, txid, status, delivery_details, created_at`              |
+| `card_units` | `id, card_id, delivery_details, is_sold, order_id, sold_at, created_at`                                    |
+
+`card_units` holds the real, sellable card material uploaded from
+`INVENTORY_MANAGEMENT`; `delivery_details` is a JSON object
+(`{ details, text, image_url }`) where `image_url` points at the public
+`card-images` storage bucket. `mapCard` also tolerates the alternative column
+names `card_name` / `price_in_usd` on `cards`, so an existing project keeps
+working without a migration.
+
+Approve on a pending order hands the buyer the oldest unsold unit for that
+product and marks it sold; when the product has no units yet the demo payload
+is used so the queue never blocks.
 
 Plus the `resolve_payment(p_order_id uuid, p_approve boolean)` RPC (SECURITY
 DEFINER, admin-only), RLS policies (operators only see their own orders, only
@@ -89,7 +101,13 @@ disabled `SOLD OUT` button.
 ### 3. Checkout — `src/components/CheckoutDialog.tsx`
 
 - Terminal modal (`role="dialog"`, Esc/backdrop close, scroll lock) opened from
-  `BUY NOW`.
+  `BUY NOW`. The dialog is capped at `max-h-[90vh]` and scrolls internally
+  (`overflow-y-auto`), so the payment rail, QR, TXID field and confirm buttons
+  stay reachable on small screens.
+- Header shows the selected product exactly as listed: `mapCard` reads
+  `card_name`/`price_in_usd` (falling back to `name`/`price_usd`) and the dialog
+  re-reads `card.raw` before printing, so it can never fall back to
+  `UNNAMED_CARD` / `0.00 USDT` for a listed card.
 - Rail dropdown: **USDT - BEP20** (`0x35aec7E35F65ea227e49fDd321709D52Ada389E4`)
   and **USDT - Solana** (`3mjR2gV3MJrudjus9yBuh3EtSMw6Ca5BVFcYiMDa1VjQ`), with a
   live `qrcode.react` QR, network/confirmation hints and a copy-address button.
@@ -115,11 +133,26 @@ disabled `SOLD OUT` button.
 
 - `/admin` is wrapped in `<ProtectedRoute requireAdmin>`: anonymous → `/auth`,
   signed-in non-admin → `NO_CLEARANCE` screen (no data is fetched).
+- Two sections behind a tab bar: **PAYMENT_QUEUE** and **INVENTORY_MANAGEMENT**.
 - Fetches every order, resolves card names client-side, and renders
   **Order ID · User ID · Card · Crypto Method · TXID · Status · Actions**.
 - `APPROVE` on a pending order calls
   `supabase.rpc('resolve_payment', { p_order_id, p_approve: true })`, toasts the
   result and refetches the queue (row flips to COMPLETED + `delivery_details`).
+- `DECLINE` calls the same RPC with `p_approve: false` (order becomes `failed`),
+  and `DELETE` purges the row from `public.orders` after a confirmation dialog.
+  Both update the table optimistically and then resync from Supabase.
+
+#### INVENTORY_MANAGEMENT — `src/components/InventoryManager.tsx`
+
+- Product dropdown (`cards`), a textarea that takes one card per line, and an
+  `<input type="file" accept="image/*" />` screenshot picker.
+- The screenshot is uploaded to the **`card-images`** storage bucket and its
+  public URL is written into each unit's `delivery_details` next to the pasted
+  text — one `card_units` row per line.
+- Below the form, a table lists every unsold unit for the selected product with
+  the screenshot preview (or an `no image` placeholder), the pasted details,
+  the insert timestamp and the availability chip.
 
 ## Theme
 
@@ -167,6 +200,7 @@ src/
 ├── components/
 │   ├── CheckoutDialog.tsx  # crypto rail picker, QR, TXID, order insert
 │   ├── GlitchText.tsx      # <GlitchText /> + <Panel />
+│   ├── InventoryManager.tsx # inventory tab: card_units upload + unsold table
 │   ├── Layout.tsx          # shell: navbar + main + footer
 │   ├── Navbar.tsx          # logo, nav, admin gate, mobile menu
 │   ├── ProtectedRoute.tsx  # session / admin guards + boot screen
@@ -195,7 +229,9 @@ src/
 ## Notes & assumptions
 
 - `delivery_details` may be a JSON object (`card_number`, `expiry`, `cvc`,
-  `brand`, `holder`) or a plain string — both render on the dashboard.
+  `brand`, `holder`) or a plain string — both render on the dashboard. Uploaded
+  units store `{ details, image_url }`, which the dashboard renders as text plus
+  the screenshot preview.
 - Order status is only ever written by the client as `pending`; approvals go
   through the `resolve_payment` RPC so RLS never needs an UPDATE policy.
 - Payment verification is manual by design: paste TXID → admin approves on-chain.
