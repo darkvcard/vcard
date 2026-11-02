@@ -271,13 +271,13 @@ export function Shop() {
               >
                 {card.imageUrl ? (
                   <div
-                    className={`mb-4 flex aspect-[1.6/1] w-full items-center justify-center overflow-hidden border bg-black/40 ${accent.border}`}
+                    className={`mb-4 aspect-[1.6/1] w-full overflow-hidden rounded-xl border bg-black/40 ${accent.border}`}
                   >
                     <img
                       src={card.imageUrl}
                       alt={`${card.name} card artwork`}
                       loading="lazy"
-                      className="h-full w-full object-contain"
+                      className="h-full w-full object-cover"
                     />
                   </div>
                 ) : null}
