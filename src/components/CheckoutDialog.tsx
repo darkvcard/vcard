@@ -15,6 +15,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useToast } from '../hooks/useToast'
 import { createOrder, errorMessage } from '../lib/api'
 import { CRYPTO_METHODS, getCryptoMethod } from '../lib/crypto'
+import { formatBalance } from '../lib/format'
 import type { CryptoMethodId } from '../lib/crypto'
 import type { Card } from '../types/db'
 
@@ -50,6 +51,13 @@ function checkoutView(card: Card) {
     .map((key) => Number.parseFloat(String(raw[key] ?? '')))
     .find((value) => Number.isFinite(value))
 
+  const rawBalance = ['card_balance', 'balance', 'description', 'card_description', 'tagline']
+    .map((key) => raw[key])
+    .find(
+      (value): value is string =>
+        typeof value === 'string' && value.trim().length > 0,
+    )
+
   return {
     name:
       card.name && card.name !== 'UNNAMED_CARD'
@@ -58,6 +66,7 @@ function checkoutView(card: Card) {
           ? rawName.trim().toUpperCase()
           : 'CARD',
     priceUsd: card.priceUsd > 0 ? card.priceUsd : (rawPrice ?? 0),
+    balance: formatBalance(card.tagline || rawBalance),
   }
 }
 
@@ -173,37 +182,56 @@ export function CheckoutDialog({ card, onClose }: CheckoutDialogProps) {
   }
 
   return (
-    <div className="fixed inset-0 z-[90] flex items-start justify-center overflow-y-auto overscroll-contain bg-black/80 p-3 backdrop-blur-sm sm:items-center sm:p-4">
+    <div className="fixed inset-0 z-[90] overflow-y-auto overscroll-contain bg-black/80 backdrop-blur-sm">
       <button
         type="button"
         aria-label="Close checkout"
-        className="absolute inset-0 cursor-default"
+        className="fixed inset-0 cursor-default"
         onClick={onClose}
         tabIndex={-1}
       />
 
       <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="checkout-title"
-        className="relative my-auto max-h-[90vh] w-full max-w-2xl overflow-y-auto overscroll-contain px-1 py-3"
+        className="relative flex min-h-full w-full items-start justify-center p-3 sm:items-center sm:p-4"
+        onClick={(event) => {
+          if (event.target === event.currentTarget) onClose()
+        }}
       >
-        <Panel label="checkout_terminal" className="relative p-4 sm:p-6 md:p-7">
-          <div className="scan-sweep" aria-hidden="true" />
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="checkout-title"
+          className="relative my-auto w-full max-w-2xl"
+        >
+          <Panel
+            label="checkout_terminal"
+            className="relative flex max-h-[90vh] flex-col p-4 sm:p-6 md:p-7"
+          >
+            <div className="scan-sweep" aria-hidden="true" />
 
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="min-w-0">
-              <p className="hud">// order_intent</p>
-              <h2
-                id="checkout-title"
-                className="mt-1 truncate font-mono text-base font-bold tracking-[0.2em] text-matrix sm:text-lg"
-              >
-                {view.name}
-              </h2>
-              <p className="mt-1 font-mono text-[10px] tracking-[0.2em] text-ash/50 uppercase">
-                {card.brand} · settles in USDT
-              </p>
-            </div>
+            <div className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <p className="hud">// order_intent</p>
+                <h2
+                  id="checkout-title"
+                  className="mt-1 truncate font-mono text-base font-bold tracking-[0.2em] text-matrix sm:text-lg"
+                >
+                  {view.name}
+                </h2>
+                <p className="mt-1 font-mono text-[10px] tracking-[0.2em] text-ash/50 uppercase">
+                  {card.brand} · settles in USDT
+                </p>
+                {view.balance ? (
+                  <p className="mt-2 flex flex-wrap items-baseline gap-2 font-mono">
+                    <span className="text-[8px] font-bold tracking-[0.3em] text-matrix/50 uppercase">
+                      BALANCE:
+                    </span>
+                    <span className="text-xl font-bold tracking-[0.06em] text-matrix text-glow sm:text-2xl">
+                      {view.balance}
+                    </span>
+                  </p>
+                ) : null}
+              </div>
             <div className="flex items-start justify-between gap-3 sm:justify-end">
               <div className="text-left sm:text-right">
                 <p className="hud text-[8px] text-matrix/40">amount_due</p>
@@ -223,9 +251,10 @@ export function CheckoutDialog({ card, onClose }: CheckoutDialogProps) {
             </div>
           </div>
 
-          <div className="divider-term my-5" />
+          <div className="divider-term my-5 shrink-0" />
 
-          <div className="grid gap-5 sm:grid-cols-[1.05fr_0.95fr]">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
+            <div className="grid gap-5 sm:grid-cols-[1.05fr_0.95fr]">
             <div className="space-y-4">
               <div>
                 <label htmlFor="crypto-method" className="field-label">
@@ -322,34 +351,38 @@ export function CheckoutDialog({ card, onClose }: CheckoutDialogProps) {
               {error}
             </p>
           ) : null}
-
-          <div className="mt-5 flex flex-col gap-2 sm:flex-row">
-            <TermButton
-              className="flex-1 py-3"
-              prompt="&gt;"
-              onClick={() => void handleConfirm()}
-              disabled={submitting || soldOut}
-            >
-              {submitting ? (
-                <>
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                  BROADCASTING…
-                </>
-              ) : soldOut ? (
-                'SOLD OUT'
-              ) : (
-                'CONFIRM PAYMENT'
-              )}
-            </TermButton>
-            <TermButton variant="ghost" className="sm:w-32" onClick={onClose} disabled={submitting}>
-              ABORT
-            </TermButton>
           </div>
 
-          <p className="mt-3 font-mono text-[8.5px] leading-relaxed tracking-[0.18em] text-ash/30 uppercase">
-            orders are queued as pending · an admin verifies the txid on-chain before the card is delivered
-          </p>
+          <div className="mt-4 shrink-0 border-t border-white/10 pt-4">
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <TermButton
+                className="flex-1 py-3"
+                prompt="&gt;"
+                onClick={() => void handleConfirm()}
+                disabled={submitting || soldOut}
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                    BROADCASTING…
+                  </>
+                ) : soldOut ? (
+                  'SOLD OUT'
+                ) : (
+                  'CONFIRM PAYMENT'
+                )}
+              </TermButton>
+              <TermButton variant="ghost" className="sm:w-32" onClick={onClose} disabled={submitting}>
+                ABORT
+              </TermButton>
+            </div>
+
+            <p className="mt-3 font-mono text-[8.5px] leading-relaxed tracking-[0.18em] text-ash/30 uppercase">
+              orders are queued as pending · an admin verifies the txid on-chain before the card is delivered
+            </p>
+          </div>
         </Panel>
+        </div>
       </div>
     </div>
   )

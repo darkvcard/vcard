@@ -13,6 +13,7 @@ import { GlitchText, Panel } from '../components/GlitchText'
 import { CheckoutDialog } from '../components/CheckoutDialog'
 import { TermButton } from '../components/TermButton'
 import { errorMessage, fetchCards } from '../lib/api'
+import { formatBalance } from '../lib/format'
 import { isSupabaseConfigured } from '../lib/supabase'
 import type { Card } from '../types/db'
 
@@ -24,7 +25,7 @@ const DEMO_CARDS: Card[] = [
   {
     id: 'demo-ghost-01',
     name: 'GHOST_01',
-    tagline: 'single-use burner',
+    tagline: '$250',
     brand: 'VISA',
     priceUsd: 9,
     stockStatus: 'in_stock',
@@ -37,7 +38,7 @@ const DEMO_CARDS: Card[] = [
   {
     id: 'demo-ghost-05',
     name: 'GHOST_05',
-    tagline: 'five card bundle',
+    tagline: '$1,200',
     brand: 'VISA',
     priceUsd: 34,
     stockStatus: 'in_stock',
@@ -50,7 +51,7 @@ const DEMO_CARDS: Card[] = [
   {
     id: 'demo-neon-10',
     name: 'NEON_10',
-    tagline: 'reloadable identity shield',
+    tagline: '$5,000',
     brand: 'MASTERCARD',
     priceUsd: 59,
     stockStatus: 'out_of_stock',
@@ -63,7 +64,7 @@ const DEMO_CARDS: Card[] = [
   {
     id: 'demo-void-25',
     name: 'VOID_25',
-    tagline: 'multi-merchant stack',
+    tagline: '$12,000',
     brand: 'VISA',
     priceUsd: 129,
     stockStatus: 'in_stock',
@@ -261,6 +262,7 @@ export function Shop() {
             const accent = accentFor(card)
             const soldOut = card.stockStatus === 'out_of_stock'
             const lowStock = card.stockStatus === 'low_stock'
+            const balance = formatBalance(card.tagline)
             return (
               <Panel
                 key={card.id}
@@ -268,25 +270,37 @@ export function Shop() {
                 className="flex flex-col p-5 transition-all duration-300 hover:-translate-y-1"
               >
                 {card.imageUrl ? (
-                  <img
-                    src={card.imageUrl}
-                    alt={`${card.name} card artwork`}
-                    loading="lazy"
-                    className={`mb-4 h-36 w-full border object-cover ${accent.border}`}
-                  />
-                ) : null}
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h2 className={`font-mono text-base font-bold tracking-[0.2em] ${accent.text}`}>
-                      {card.name}
-                    </h2>
-                    <p className="mt-1 font-mono text-[10px] tracking-[0.22em] text-ash/50 uppercase">
-                      {card.tagline || 'issuer slot'}
-                    </p>
+                  <div
+                    className={`mb-4 flex aspect-[1.6/1] w-full items-center justify-center overflow-hidden border bg-black/40 ${accent.border}`}
+                  >
+                    <img
+                      src={card.imageUrl}
+                      alt={`${card.name} card artwork`}
+                      loading="lazy"
+                      className="h-full w-full object-contain"
+                    />
                   </div>
-                  <span className={`chip ${soldOut ? 'chip-alert' : lowStock ? 'chip-neon' : ''}`}>
-                    {soldOut ? 'SOLD OUT' : lowStock ? 'LOW STOCK' : 'IN STOCK'}
-                  </span>
+                ) : null}
+                <div>
+                  <h2 className={`font-mono text-base font-bold tracking-[0.2em] ${accent.text}`}>
+                    {card.name}
+                  </h2>
+                  {balance ? (
+                    <p className="mt-2 flex flex-wrap items-baseline gap-2 font-mono">
+                      <span className="text-[9px] font-bold tracking-[0.3em] text-matrix/50 uppercase">
+                        BALANCE:
+                      </span>
+                      <span
+                        className={`text-2xl font-bold tracking-[0.06em] text-glow ${accent.text}`}
+                      >
+                        {balance}
+                      </span>
+                    </p>
+                  ) : (
+                    <p className="mt-1 font-mono text-[10px] tracking-[0.22em] text-ash/50 uppercase">
+                      issuer slot
+                    </p>
+                  )}
                 </div>
 
                 <div className="mt-5 flex items-end justify-between border-y border-white/5 py-4">
@@ -317,8 +331,14 @@ export function Shop() {
                   ) : null}
                   <div className="flex items-center justify-between gap-3">
                     <dt className="text-ash/45 uppercase">status</dt>
-                    <dd className={soldOut ? 'text-[#ff849b]' : 'text-matrix/80'}>
-                      {card.stockStatus}
+                    <dd>
+                      <span
+                        className={`chip ${
+                          soldOut ? 'chip-alert' : lowStock ? 'chip-neon' : ''
+                        }`}
+                      >
+                        {soldOut ? 'SOLD OUT' : lowStock ? 'LOW STOCK' : 'IN STOCK'}
+                      </span>
                     </dd>
                   </div>
                 </dl>

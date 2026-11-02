@@ -15,6 +15,7 @@ import {
 import { Panel } from './GlitchText'
 import { TermButton } from './TermButton'
 import { useToast } from '../hooks/useToast'
+import { formatBalance } from '../lib/format'
 import {
   createCard,
   deleteCard,
@@ -360,17 +361,21 @@ export function ProductManager() {
 
               <div className="lg:col-span-2">
                 <label htmlFor="product-description" className="field-label">
-                  description
+                  card_balance
                 </label>
                 <input
                   id="product-description"
                   type="text"
                   value={form.description}
                   onChange={(event) => setForm({ ...form, description: event.target.value })}
-                  placeholder="reloadable · 3-d secure · instant delivery"
+                  placeholder="$100"
                   disabled={submitting}
                   className="field-term disabled:opacity-60"
                 />
+                <p className="mt-1.5 font-mono text-[9px] tracking-[0.18em] text-ash/35 uppercase">
+                  loaded value shown as <span className="text-matrix/70">BALANCE: $100</span> on the
+                  shop card
+                </p>
               </div>
 
               <div className="lg:col-span-2">
@@ -557,10 +562,10 @@ export function ProductManager() {
                       </p>
                       {card.tagline ? (
                         <p
-                          className="truncate font-mono text-[9.5px] tracking-[0.1em] text-ash/40"
-                          title={card.tagline}
+                          className="truncate font-mono text-[9.5px] tracking-[0.1em] text-matrix/70"
+                          title={`card balance ${card.tagline}`}
                         >
-                          {card.tagline}
+                          BALANCE: {formatBalance(card.tagline)}
                         </p>
                       ) : null}
                       <p className="font-mono text-[9px] tracking-[0.15em] text-matrix/30">

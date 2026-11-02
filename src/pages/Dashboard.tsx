@@ -61,6 +61,16 @@ function formatDate(value: string | null) {
   return date.toISOString().slice(0, 16).replace('T', ' ')
 }
 
+/**
+ * `orders` only stores `card_id`; `fetchOrders` already resolves the product
+ * name from `cards`. Fall back to the short id (never a bare UNKNOWN_CARD)
+ * when the row was deleted from the catalog.
+ */
+function orderCardLabel(order: Order): string {
+  if (order.cardName) return order.cardName
+  return order.cardId ? `CARD_${order.cardId.slice(0, 8).toUpperCase()}` : 'UNKNOWN_CARD'
+}
+
 export function Dashboard() {
   const { user } = useAuth()
   const toast = useToast()
@@ -217,7 +227,7 @@ export function Dashboard() {
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <p className="font-mono text-[12px] font-bold tracking-[0.18em] text-bone/90">
-                            {order.cardName ?? 'UNKNOWN_CARD'}
+                            {orderCardLabel(order)}
                           </p>
                           <p className="mt-1 font-mono text-[9.5px] tracking-[0.18em] text-ash/45 uppercase">
                             #{order.id.slice(0, 8)} · {order.cryptoMethod ?? 'n/a'} ·{' '}
@@ -396,7 +406,7 @@ export function Dashboard() {
             <Panel accent="matrix" label="latest_delivery" className="p-5">
               <p className="hud text-[8px]">card</p>
               <p className="mt-1 font-mono text-sm font-bold tracking-[0.2em] text-matrix">
-                {delivered.cardName ?? 'DELIVERED_CARD'}
+                {orderCardLabel(delivered)}
               </p>
               <p className="mt-3 font-mono text-[10px] tracking-[0.18em] text-ash/55 uppercase">
                 order #{delivered.id.slice(0, 8)} · {usd(delivered.amountUsd)} USDT

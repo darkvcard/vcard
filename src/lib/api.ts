@@ -196,7 +196,8 @@ export async function deleteCard(cardId: string): Promise<void> {
 
 /**
  * Orders for one operator (dashboard) or every order (admin).
- * Card names are joined client-side so no FK embed is required.
+ * `orders` only stores `card_id`, so the matching `cards.name` is joined
+ * client-side (no FK embed required) and written back into `order.cardName`.
  */
 export async function fetchOrders(userId?: string): Promise<Order[]> {
   let query = supabase.from('orders').select('*')
@@ -218,12 +219,38 @@ export async function fetchOrders(userId?: string): Promise<Order[]> {
   return orders.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))
 }
 
+/**
+ * `orders` only stores `card_id`; this rebuilds the id → name map used by the
+ * dashboard/admin order logs. Older projects expose `card_name` instead of
+ * `name`, so each known shape is tried before a `select('*')` fallback.
+ */
 async function fetchCardNames(): Promise<Map<string, string>> {
-  const { data } = await supabase.from('cards').select('id, name')
   const map = new Map<string, string>()
-  for (const row of (data ?? []) as Row[]) {
-    map.set(String(row.id ?? ''), str(row.card_name ?? row.name).toUpperCase())
+
+  const shapes = [
+    () => supabase.from('cards').select('id, name'),
+    () => supabase.from('cards').select('id, card_name'),
+    () => supabase.from('cards').select('*'),
+  ]
+
+  for (const shape of shapes) {
+    const { data, error } = (await shape()) as {
+      data: Row[] | null
+      error: { message: string } | null
+    }
+    if (error) continue
+
+    const rows = data ?? []
+    for (const row of rows) {
+      const id = str(row.id)
+      const name = str(row.card_name ?? row.name ?? row.title ?? row.tier)
+      if (id && name) map.set(id, name.toUpperCase())
+    }
+
+    // Rows exist but carried no usable name → try the next column shape.
+    if (map.size > 0 || rows.length === 0) return map
   }
+
   return map
 }
 
