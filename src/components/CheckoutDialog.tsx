@@ -9,7 +9,6 @@ import {
   ShieldAlert,
   X,
 } from 'lucide-react'
-import { Panel } from './GlitchText'
 import { TermButton } from './TermButton'
 import { useAuth } from '../hooks/useAuth'
 import { useToast } from '../hooks/useToast'
@@ -182,132 +181,114 @@ export function CheckoutDialog({ card, onClose }: CheckoutDialogProps) {
   }
 
   return (
-    <div className="fixed inset-0 z-[90] overflow-y-auto overscroll-contain bg-black/80 backdrop-blur-sm">
-      <button
-        type="button"
-        aria-label="Close checkout"
-        className="fixed inset-0 cursor-default"
-        onClick={onClose}
-        tabIndex={-1}
-      />
-
+    <div
+      className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-black/80 p-4 sm:p-6"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose()
+      }}
+    >
       <div
-        className="relative flex min-h-full w-full items-start justify-center p-3 sm:items-center sm:p-4"
-        onClick={(event) => {
-          if (event.target === event.currentTarget) onClose()
-        }}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="checkout-title"
+        className="relative my-8 flex w-full max-w-lg flex-col rounded-lg border border-green-500/30 bg-black sm:my-12"
       >
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="checkout-title"
-          className="relative my-auto w-full max-w-2xl"
-        >
-          <Panel
-            label="checkout_terminal"
-            className="relative flex max-h-[90vh] flex-col p-4 sm:p-6 md:p-7"
-          >
-            <div className="scan-sweep" aria-hidden="true" />
+        <div className="scan-sweep" aria-hidden="true" />
 
-            <div className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div className="min-w-0">
-                <p className="hud">// order_intent</p>
-                <h2
-                  id="checkout-title"
-                  className="mt-1 truncate font-mono text-base font-bold tracking-[0.2em] text-matrix sm:text-lg"
-                >
-                  {view.name}
-                </h2>
-                <p className="mt-1 font-mono text-[10px] tracking-[0.2em] text-ash/50 uppercase">
-                  {card.brand} · settles in USDT
-                </p>
-                {view.balance ? (
-                  <p className="mt-2 flex flex-wrap items-baseline gap-2 font-mono">
-                    <span className="text-[8px] font-bold tracking-[0.3em] text-matrix/50 uppercase">
-                      BALANCE:
-                    </span>
-                    <span className="text-xl font-bold tracking-[0.06em] text-matrix text-glow sm:text-2xl">
-                      {view.balance}
-                    </span>
-                  </p>
-                ) : null}
-              </div>
-            <div className="flex items-start justify-between gap-3 sm:justify-end">
-              <div className="text-left sm:text-right">
-                <p className="hud text-[8px] text-matrix/40">amount_due</p>
-                <p className="font-mono text-lg font-bold text-matrix text-glow sm:text-xl">
-                  {usd(view.priceUsd)}
-                  <span className="ml-1 text-[9px] tracking-[0.2em] text-ash/50">USDT</span>
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={onClose}
-                aria-label="Close checkout"
-                className="cursor-pointer border border-white/10 p-1.5 text-ash/60 transition-colors hover:border-alert/50 hover:text-[#ff849b]"
+        <div className="flex items-start justify-between gap-3 border-b border-white/10 p-5">
+          <div className="min-w-0">
+            <p className="hud">// checkout_terminal</p>
+            <h2
+              id="checkout-title"
+              className="mt-1 truncate font-mono text-base font-bold tracking-[0.2em] text-matrix sm:text-lg"
+            >
+              {view.name}
+            </h2>
+            <p className="mt-1 font-mono text-[10px] tracking-[0.2em] text-ash/50 uppercase">
+              {card.brand} · settles in USDT
+            </p>
+            {view.balance ? (
+              <p className="mt-2 flex flex-wrap items-baseline gap-2 font-mono">
+                <span className="text-[8px] font-bold tracking-[0.3em] text-matrix/50 uppercase">
+                  BALANCE:
+                </span>
+                <span className="text-xl font-bold tracking-[0.06em] text-matrix text-glow sm:text-2xl">
+                  {view.balance}
+                </span>
+              </p>
+            ) : null}
+          </div>
+          <div className="flex shrink-0 items-start gap-3">
+            <div className="text-right">
+              <p className="hud text-[8px] text-matrix/40">amount_due</p>
+              <p className="font-mono text-lg font-bold text-matrix text-glow">
+                {usd(view.priceUsd)}
+                <span className="ml-1 text-[9px] tracking-[0.2em] text-ash/50">USDT</span>
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close checkout"
+              className="cursor-pointer border border-white/10 p-1.5 text-ash/60 transition-colors hover:border-alert/50 hover:text-[#ff849b]"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+
+        <div className="space-y-5 p-5">
+          <div>
+            <label htmlFor="crypto-method" className="field-label">
+              payment_rail
+            </label>
+            <div className="relative">
+              <Coins
+                className="pointer-events-none absolute top-1/2 left-3 h-3.5 w-3.5 -translate-y-1/2 text-matrix/35"
+                aria-hidden="true"
+              />
+              <select
+                id="crypto-method"
+                value={methodId}
+                onChange={(event) => {
+                  setMethodId(event.target.value as CryptoMethodId)
+                  setCopied(false)
+                }}
+                className="field-term cursor-pointer appearance-none pr-8 pl-9"
               >
-                <X className="h-4 w-4" />
-              </button>
+                {CRYPTO_METHODS.map((option) => (
+                  <option key={option.id} value={option.id} className="bg-void text-matrix">
+                    {option.label}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 
-          <div className="divider-term my-5 shrink-0" />
-
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
-            <div className="grid gap-5 sm:grid-cols-[1.05fr_0.95fr]">
-            <div className="space-y-4">
-              <div>
-                <label htmlFor="crypto-method" className="field-label">
-                  payment_rail
-                </label>
-                <div className="relative">
-                  <Coins
-                    className="pointer-events-none absolute top-1/2 left-3 h-3.5 w-3.5 -translate-y-1/2 text-matrix/35"
-                    aria-hidden="true"
-                  />
-                  <select
-                    id="crypto-method"
-                    value={methodId}
-                    onChange={(event) => {
-                      setMethodId(event.target.value as CryptoMethodId)
-                      setCopied(false)
-                    }}
-                    className="field-term cursor-pointer appearance-none pr-8 pl-9"
-                  >
-                    {CRYPTO_METHODS.map((option) => (
-                      <option key={option.id} value={option.id} className="bg-void text-matrix">
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <p className="field-label">deposit_address</p>
-                <div className="border border-matrix/25 bg-black/70 px-3 py-2.5">
-                  <p className="font-mono text-[10.5px] leading-relaxed break-all text-matrix/90">
-                    {method.address}
-                  </p>
-                  <p className="mt-2 font-mono text-[8.5px] tracking-[0.2em] text-ash/40 uppercase">
-                    {method.network} · {method.confirmations} confirmation
-                    {method.confirmations > 1 ? 's' : ''}
-                  </p>
-                </div>
-                <TermButton
-                  variant="ghost"
-                  className="mt-2 w-full py-2 text-[9px]"
-                  onClick={() => void copyAddress()}
-                >
-                  {copied ? (
-                    <Check className="h-3 w-3 text-matrix" aria-hidden="true" />
-                  ) : (
-                    <ClipboardCopy className="h-3 w-3" aria-hidden="true" />
-                  )}
-                  {copied ? 'COPIED' : 'COPY ADDRESS'}
-                </TermButton>
-              </div>
+          <div>
+            <p className="field-label">deposit_address</p>
+            <div className="border border-matrix/25 bg-black/70 px-3 py-2.5">
+              <p className="font-mono text-[10.5px] leading-relaxed break-all text-matrix/90">
+                {method.address}
+              </p>
+              <p className="mt-2 font-mono text-[8.5px] tracking-[0.2em] text-ash/40 uppercase">
+                {method.network} · {method.confirmations} confirmation
+                {method.confirmations > 1 ? 's' : ''}
+              </p>
             </div>
+            <TermButton
+              variant="ghost"
+              className="mt-2 w-full py-2 text-[9px]"
+              onClick={() => void copyAddress()}
+            >
+              {copied ? (
+                <Check className="h-3 w-3 text-matrix" aria-hidden="true" />
+              ) : (
+                <ClipboardCopy className="h-3 w-3" aria-hidden="true" />
+              )}
+              {copied ? 'COPIED' : 'COPY ADDRESS'}
+            </TermButton>
+          </div>
 
             <div className="flex flex-col items-center justify-start gap-2 border border-matrix/20 bg-black/50 p-3">
               <QRCodeSVG
@@ -321,67 +302,65 @@ export function CheckoutDialog({ card, onClose }: CheckoutDialogProps) {
               />
               <p className="hud text-[8px] text-matrix/40">scan_to_pay</p>
             </div>
-          </div>
 
-          <div className="mt-5">
-            <label htmlFor="txid" className="field-label">
-              paste your transaction hash (txid)
-            </label>
-            <input
-              id="txid"
-              ref={txidRef}
-              value={txid}
-              onChange={(event) => setTxid(event.target.value)}
-              placeholder="0x9f2c…  /  5Kd3…"
-              spellCheck={false}
-              autoComplete="off"
-              className="field-term"
-            />
-            <p className="mt-1.5 font-mono text-[9px] tracking-[0.18em] text-ash/35 uppercase">
-              send exactly {usd(view.priceUsd)} USDT, then paste the hash · verifier checks it manually
-            </p>
-          </div>
-
-          {error ? (
-            <p
-              role="alert"
-              className="mt-3 flex items-start gap-2 border border-alert/40 bg-alert/5 px-3 py-2 font-mono text-[10px] tracking-[0.15em] text-[#ff849b] uppercase"
-            >
-              <ShieldAlert className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
-              {error}
-            </p>
-          ) : null}
-          </div>
-
-          <div className="mt-4 shrink-0 border-t border-white/10 pt-4">
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <TermButton
-                className="flex-1 py-3"
-                prompt="&gt;"
-                onClick={() => void handleConfirm()}
-                disabled={submitting || soldOut}
-              >
-                {submitting ? (
-                  <>
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                    BROADCASTING…
-                  </>
-                ) : soldOut ? (
-                  'SOLD OUT'
-                ) : (
-                  'CONFIRM PAYMENT'
-                )}
-              </TermButton>
-              <TermButton variant="ghost" className="sm:w-32" onClick={onClose} disabled={submitting}>
-                ABORT
-              </TermButton>
+            <div>
+              <label htmlFor="txid" className="field-label">
+                paste your transaction hash (txid)
+              </label>
+              <input
+                id="txid"
+                ref={txidRef}
+                value={txid}
+                onChange={(event) => setTxid(event.target.value)}
+                placeholder="0x9f2c…  /  5Kd3…"
+                spellCheck={false}
+                autoComplete="off"
+                className="field-term"
+              />
+              <p className="mt-1.5 font-mono text-[9px] tracking-[0.18em] text-ash/35 uppercase">
+                send exactly {usd(view.priceUsd)} USDT, then paste the hash · verifier checks it
+                manually
+              </p>
             </div>
 
-            <p className="mt-3 font-mono text-[8.5px] leading-relaxed tracking-[0.18em] text-ash/30 uppercase">
-              orders are queued as pending · an admin verifies the txid on-chain before the card is delivered
-            </p>
+            {error ? (
+              <p
+                role="alert"
+                className="flex items-start gap-2 border border-alert/40 bg-alert/5 px-3 py-2 font-mono text-[10px] tracking-[0.15em] text-[#ff849b] uppercase"
+              >
+                <ShieldAlert className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+                {error}
+              </p>
+            ) : null}
+        </div>
+
+        <div className="border-t border-white/10 p-5">
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <TermButton
+              className="flex-1 py-3"
+              prompt="&gt;"
+              onClick={() => void handleConfirm()}
+              disabled={submitting || soldOut}
+            >
+              {submitting ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                  BROADCASTING…
+                </>
+              ) : soldOut ? (
+                'SOLD OUT'
+              ) : (
+                'CONFIRM PAYMENT'
+              )}
+            </TermButton>
+            <TermButton variant="ghost" className="sm:w-32" onClick={onClose} disabled={submitting}>
+              ABORT
+            </TermButton>
           </div>
-        </Panel>
+
+          <p className="mt-3 font-mono text-[8.5px] leading-relaxed tracking-[0.18em] text-ash/30 uppercase">
+            orders are queued as pending · an admin verifies the txid on-chain before the card is delivered
+          </p>
         </div>
       </div>
     </div>
