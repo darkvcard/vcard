@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle,
+  Boxes,
   CheckCircle2,
   ClipboardCopy,
   Loader2,
@@ -14,6 +15,7 @@ import {
 } from 'lucide-react'
 import { GlitchText, Panel } from '../components/GlitchText'
 import { InventoryManager } from '../components/InventoryManager'
+import { ProductManager } from '../components/ProductManager'
 import { TermButton } from '../components/TermButton'
 import { useToast } from '../hooks/useToast'
 import { deleteOrder, errorMessage, fetchOrders, resolvePayment } from '../lib/api'
@@ -22,6 +24,7 @@ import type { Order, OrderStatus } from '../types/db'
 const TABS = [
   { id: 'PAYMENT_QUEUE', label: 'PAYMENT_QUEUE', icon: Wallet },
   { id: 'INVENTORY_MANAGEMENT', label: 'INVENTORY_MANAGEMENT', icon: Package },
+  { id: 'PRODUCT_MANAGEMENT', label: 'PRODUCT_MANAGEMENT', icon: Boxes },
 ] as const
 
 type TabId = (typeof TABS)[number]['id']
@@ -422,6 +425,12 @@ export function Admin() {
       {tab === 'INVENTORY_MANAGEMENT' ? (
         <div className="mt-6">
           <InventoryManager />
+        </div>
+      ) : null}
+
+      {tab === 'PRODUCT_MANAGEMENT' ? (
+        <div className="mt-6">
+          <ProductManager />
         </div>
       ) : null}
 

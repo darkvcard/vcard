@@ -1,6 +1,7 @@
 import { supabase } from './supabase'
 import type {
   Card,
+  CardDraft,
   CardUnit,
   DeliveryDetails,
   NewOrder,
@@ -32,9 +33,9 @@ function normalisePerks(value: unknown): string[] {
 
 function normaliseStock(value: unknown): StockStatus {
   const status = str(value, 'in_stock').toLowerCase().replace(/[\s-]+/g, '_')
-  return status === 'out_of_stock' || status === 'sold_out' || status === '0'
-    ? 'out_of_stock'
-    : 'in_stock'
+  if (status === 'out_of_stock' || status === 'sold_out' || status === '0') return 'out_of_stock'
+  if (status === 'low_stock' || status === 'low' || status === 'limited') return 'low_stock'
+  return 'in_stock'
 }
 
 /** Tolerates small schema variations while keeping one typed UI model. */
@@ -61,6 +62,7 @@ export function mapCard(row: Row): Card {
         ? str(row.monthly_limit)
         : null,
     perks: normalisePerks(row.perks ?? row.features),
+    imageUrl: str(row.image_url ?? row.imageUrl ?? row.image ?? row.card_image) || null,
     raw: row,
   }
 }
@@ -131,6 +133,65 @@ export async function fetchCards(): Promise<Card[]> {
   const { data, error } = await supabase.from('cards').select('*')
   if (error) throw error
   return ((data ?? []) as Row[]).map(mapCard).sort((a, b) => a.priceUsd - b.priceUsd)
+}
+
+/* -------------------------------------------------------------------------- */
+/* cards: PRODUCT_MANAGEMENT writes (admin only, RLS enforced)                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Canonical `cards` payload plus a legacy alias payload. Older projects expose
+ * `card_name` / `price_in_usd`, so a rejected write is retried with those names
+ * before the original error is surfaced to the console.
+ */
+function cardPayloads(draft: CardDraft): [Row, Row] {
+  const shared: Row = {
+    description: draft.description.trim() || null,
+    brand: draft.brand.trim().toUpperCase() || 'VISA',
+    stock_status: draft.stockStatus,
+    image_url: draft.imageUrl,
+  }
+  return [
+    { ...shared, name: draft.name.trim(), price_usd: draft.priceUsd },
+    { ...shared, card_name: draft.name.trim(), price_in_usd: draft.priceUsd },
+  ]
+}
+
+function assertDraft(draft: CardDraft): void {
+  if (!draft.name.trim()) throw new Error('name_required')
+  if (!Number.isFinite(draft.priceUsd) || draft.priceUsd < 0) {
+    throw new Error('price_invalid')
+  }
+}
+
+/** Inserts one new product into `cards`. */
+export async function createCard(draft: CardDraft): Promise<void> {
+  assertDraft(draft)
+  const [canonical, legacy] = cardPayloads(draft)
+  const first = await supabase.from('cards').insert(canonical)
+  if (!first.error) return
+
+  const retry = await supabase.from('cards').insert(legacy)
+  if (retry.error) throw first.error
+}
+
+/** Updates one product; the image can be replaced or cleared (`imageUrl: null`). */
+export async function updateCard(cardId: string, draft: CardDraft): Promise<void> {
+  if (!cardId) throw new Error('card_required')
+  assertDraft(draft)
+  const [canonical, legacy] = cardPayloads(draft)
+  const first = await supabase.from('cards').update(canonical).eq('id', cardId)
+  if (!first.error) return
+
+  const retry = await supabase.from('cards').update(legacy).eq('id', cardId)
+  if (retry.error) throw first.error
+}
+
+/** Admin hard-delete: removes the product row (its units cascade). */
+export async function deleteCard(cardId: string): Promise<void> {
+  if (!cardId) throw new Error('card_required')
+  const { error } = await supabase.from('cards').delete().eq('id', cardId)
+  if (error) throw error
 }
 
 /**

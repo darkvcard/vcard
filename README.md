@@ -44,7 +44,7 @@ It creates everything the frontend expects:
 
 | Table        | Columns used by the app                                                                                   |
 | ------------ | --------------------------------------------------------------------------------------------------------- |
-| `cards`      | `id, name, description, brand, price_usd, stock_status, load_limit, monthly_limit, perks`                  |
+| `cards`      | `id, name, description, brand, price_usd, stock_status, load_limit, monthly_limit, perks, image_url` |
 | `user_roles` | `user_id, role` (`user` / `admin`)                                                                         |
 | `orders`     | `id, user_id, card_id, amount_usd, crypto_method, txid, status, delivery_details, created_at`              |
 | `card_units` | `id, card_id, delivery_details, is_sold, order_id, sold_at, created_at`                                    |
@@ -94,7 +94,9 @@ so `signUp` returns a session immediately.
 - Loads `select('*') from cards`, normalises rows (`src/lib/api.ts` → `mapCard`)
   and sorts by price.
 - Loading skeleton, error panel with `RETRY_SYNC`, empty-search state, search +
-  `ALL / IN STOCK / OUT OF STOCK` filters and a `SYNC` button.
+  `ALL / IN STOCK / LOW STOCK / OUT OF STOCK` filters and a `SYNC` button.
+- A product with `image_url` renders the uploaded artwork at the top of its
+  card; products without artwork keep the CSS-drawn panel.
 - `stock_status === 'out_of_stock'` renders a red **SOLD OUT** chip and a
 disabled `SOLD OUT` button.
 
@@ -133,7 +135,8 @@ disabled `SOLD OUT` button.
 
 - `/admin` is wrapped in `<ProtectedRoute requireAdmin>`: anonymous → `/auth`,
   signed-in non-admin → `NO_CLEARANCE` screen (no data is fetched).
-- Two sections behind a tab bar: **PAYMENT_QUEUE** and **INVENTORY_MANAGEMENT**.
+- Three sections behind a tab bar: **PAYMENT_QUEUE**, **INVENTORY_MANAGEMENT**
+  and **PRODUCT_MANAGEMENT**.
 - Fetches every order, resolves card names client-side, and renders
   **Order ID · User ID · Card · Crypto Method · TXID · Status · Actions**.
 - `APPROVE` on a pending order calls
@@ -153,6 +156,21 @@ disabled `SOLD OUT` button.
 - Below the form, a table lists every unsold unit for the selected product with
   the screenshot preview (or an `no image` placeholder), the pasted details,
   the insert timestamp and the availability chip.
+
+#### PRODUCT_MANAGEMENT — `src/components/ProductManager.tsx`
+
+- Creates and edits rows in `cards`: **card_name**, **card_type**
+  (`VISA` / `MASTERCARD` / `AMEX`), **price_usd**, **description**,
+  **stock_status** (`in_stock` / `low_stock` / `out_of_stock`) and an optional
+  `<input type="file" accept="image/*" />`.
+- The artwork is uploaded to the **`card-images`** bucket and the public URL is
+  saved in `cards.image_url` (see
+  [`supabase/migrations/20261102000000_cards_product_management.sql`](supabase/migrations/20261102000000_cards_product_management.sql),
+  which also widens `stock_status` to allow `low_stock` and adds the admin
+  INSERT / UPDATE / DELETE policies on `cards`).
+- The table below lists every product with thumbnail, name, type, price and
+  stock chip. `EDIT` loads the row back into the form (`SAVE_CHANGES`);
+  `DELETE` purges the row after a confirmation dialog.
 
 ## Theme
 

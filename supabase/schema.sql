@@ -25,18 +25,32 @@ create table if not exists public.cards (
   brand text not null default 'VISA',
   price_usd numeric(10, 2) not null default 0,
   stock_status text not null default 'in_stock'
-    check (stock_status in ('in_stock', 'out_of_stock')),
+    check (stock_status in ('in_stock', 'low_stock', 'out_of_stock')),
   load_limit text,
   monthly_limit text,
   perks text[] not null default '{}',
+  image_url text,
   created_at timestamptz not null default now()
 );
 
 alter table public.cards enable row level security;
 
--- The shop is public; only service-role/admin tooling writes cards.
+-- The shop is public; only admin tooling writes cards.
 create policy "cards are public" on public.cards
   for select using (true);
+
+create policy "admins insert cards" on public.cards
+  for insert to authenticated
+  with check (public.is_admin(auth.uid()));
+
+create policy "admins update cards" on public.cards
+  for update to authenticated
+  using (public.is_admin(auth.uid()))
+  with check (public.is_admin(auth.uid()));
+
+create policy "admins delete cards" on public.cards
+  for delete to authenticated
+  using (public.is_admin(auth.uid()));
 
 -- ---------- user_roles ------------------------------------------------------
 create table if not exists public.user_roles (
