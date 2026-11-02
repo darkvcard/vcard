@@ -1,5 +1,6 @@
 import { supabase } from './supabase'
 import type {
+  AdminUser,
   Card,
   CardDraft,
   CardUnit,
@@ -272,6 +273,105 @@ export async function resolvePayment(orderId: string, approve: boolean): Promise
 export async function deleteOrder(orderId: string): Promise<void> {
   const { error } = await supabase.from('orders').delete().eq('id', orderId)
   if (error) throw error
+}
+
+/* -------------------------------------------------------------------------- */
+/* users: USER_MANAGEMENT (admin only, RPC + user_roles writes)                */
+/* -------------------------------------------------------------------------- */
+
+function toBool(value: unknown): boolean | null {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value !== 0
+  if (typeof value === 'string') {
+    const normalised = value.trim().toLowerCase()
+    if (['true', 't', '1', 'yes', 'admin'].includes(normalised)) return true
+    if (['false', 'f', '0', 'no', 'user'].includes(normalised)) return false
+  }
+  return null
+}
+
+/**
+ * Tolerates both the canonical RPC shape (`is_admin`) and projects that expose
+ * a plain `role` column (or a `user_id` / `email_address` alias).
+ */
+export function mapAdminUser(row: Row): AdminUser {
+  const flag = toBool(row.is_admin ?? row.isAdmin ?? row.admin)
+  const role = str(row.role).toLowerCase()
+
+  return {
+    id: str(row.id ?? row.user_id ?? row.uid),
+    email: str(row.email ?? row.user_email ?? row.email_address) || null,
+    isAdmin: flag ?? role === 'admin',
+    createdAt: str(row.created_at ?? row.joined_at ?? row.inserted_at ?? row.createdAt) || null,
+    raw: row,
+  }
+}
+
+/**
+ * `admin_get_users()` returns id, email, is_admin and created_at for every auth
+ * user. The function is SECURITY DEFINER so the anon-key client never needs
+ * read access on `auth.users`.
+ */
+export async function fetchAdminUsers(): Promise<AdminUser[]> {
+  const { data, error } = await supabase.rpc('admin_get_users')
+  if (error) throw error
+
+  const rows = Array.isArray(data)
+    ? (data as Row[])
+    : data && typeof data === 'object'
+      ? [data as Row]
+      : []
+
+  return rows
+    .map(mapAdminUser)
+    .filter((user) => user.id)
+    .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))
+}
+
+/**
+ * Grant admin: inserts the `admin` row into `user_roles`. Projects where
+ * `user_id` is the primary key (one row per operator) reject the insert, so the
+ * existing row is upgraded instead.
+ */
+export async function grantAdminRole(userId: string): Promise<void> {
+  if (!userId) throw new Error('user_required')
+
+  const insert = await supabase.from('user_roles').insert({ user_id: userId, role: 'admin' })
+  if (!insert.error) return
+
+  const update = await supabase
+    .from('user_roles')
+    .update({ role: 'admin' })
+    .eq('user_id', userId)
+
+  if (update.error) throw insert.error
+}
+
+/**
+ * Revoke admin: deletes the `admin` row from `user_roles` and leaves the
+ * `user` row untouched. If the project keeps a single role row per operator,
+ * that row is downgraded to `user` instead of being deleted so the account
+ * never ends up role-less.
+ */
+export async function revokeAdminRole(userId: string): Promise<void> {
+  if (!userId) throw new Error('user_required')
+
+  const removed = await supabase
+    .from('user_roles')
+    .delete()
+    .eq('user_id', userId)
+    .eq('role', 'admin')
+    .select('user_id')
+
+  if (removed.error) throw removed.error
+
+  const remaining = await supabase.from('user_roles').select('role').eq('user_id', userId)
+  if (remaining.error) throw remaining.error
+
+  if (((remaining.data ?? []) as Row[]).length === 0) {
+    const downgrade = await supabase.from('user_roles').insert({ user_id: userId, role: 'user' })
+    if (downgrade.error) throw downgrade.error
+  }
 }
 
 /* -------------------------------------------------------------------------- */

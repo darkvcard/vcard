@@ -9,6 +9,7 @@ import {
   RefreshCw,
   ShieldCheck,
   Trash2,
+  UserCog,
   Users,
   Wallet,
   XCircle,
@@ -17,6 +18,7 @@ import { GlitchText, Panel } from '../components/GlitchText'
 import { InventoryManager } from '../components/InventoryManager'
 import { ProductManager } from '../components/ProductManager'
 import { TermButton } from '../components/TermButton'
+import { UserManager } from '../components/UserManager'
 import { useToast } from '../hooks/useToast'
 import { deleteOrder, errorMessage, fetchOrders, resolvePayment } from '../lib/api'
 import type { Order, OrderStatus } from '../types/db'
@@ -25,6 +27,7 @@ const TABS = [
   { id: 'PAYMENT_QUEUE', label: 'PAYMENT_QUEUE', icon: Wallet },
   { id: 'INVENTORY_MANAGEMENT', label: 'INVENTORY_MANAGEMENT', icon: Package },
   { id: 'PRODUCT_MANAGEMENT', label: 'PRODUCT_MANAGEMENT', icon: Boxes },
+  { id: 'USER_MANAGEMENT', label: 'USER_MANAGEMENT', icon: UserCog },
 ] as const
 
 type TabId = (typeof TABS)[number]['id']
@@ -431,6 +434,12 @@ export function Admin() {
       {tab === 'PRODUCT_MANAGEMENT' ? (
         <div className="mt-6">
           <ProductManager />
+        </div>
+      ) : null}
+
+      {tab === 'USER_MANAGEMENT' ? (
+        <div className="mt-6">
+          <UserManager />
         </div>
       ) : null}
 

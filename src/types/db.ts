@@ -58,6 +58,19 @@ export type NewOrder = {
 }
 
 /**
+ * One row of the `admin_get_users()` RPC (SECURITY DEFINER, admin only):
+ * the auth user plus whether they currently hold the `admin` role.
+ */
+export type AdminUser = {
+  id: string
+  email: string | null
+  /** True when `user_roles` holds an `admin` row for this user. */
+  isAdmin: boolean
+  createdAt: string | null
+  raw: Record<string, unknown>
+}
+
+/**
  * One purchasable unit of a card product (`card_units`).
  * `deliveryDetails` holds the real card material handed to the buyer and may
  * also carry the uploaded card screenshot (`image_url`).
